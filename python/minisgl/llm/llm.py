@@ -50,7 +50,7 @@ class LLM(Scheduler):
             raise RequestAllFinished()
         results: List[BaseBackendMsg] = []
         added, sum_input_len = 0, 0
-        for i, (tokens_or_prompt, sampling_params) in enumerate(self.pending_requests):
+        for tokens_or_prompt, sampling_params in self.pending_requests:
             if sum_input_len >= self.prefill_budget:
                 break
             input_ids = self._tokenize_one(tokens_or_prompt)
@@ -58,7 +58,7 @@ class LLM(Scheduler):
             uid, added = self.counter + added, added + 1
             results.append(UserMsg(uid=uid, input_ids=input_ids, sampling_params=sampling_params))
             self.status_map[uid] = RequestStatus(
-                uid=i,
+                uid=uid,
                 input_ids=(
                     input_ids.tolist() if isinstance(tokens_or_prompt, str) else tokens_or_prompt
                 ),
@@ -71,14 +71,14 @@ class LLM(Scheduler):
     def offline_send_result(self, reply: List[DetokenizeMsg]) -> None:
         for msg in reply:
             status = self.status_map[msg.uid]
-            if not msg.finished:
+            if not (msg.finished and msg.next_token == self.eos_token_id):
                 status.output_ids.append(msg.next_token)
 
     def generate(
         self,
         prompts: List[str] | List[List[int]],
         sampling_params: List[SamplingParams] | SamplingParams,
-    ) -> List[str]:
+    ) -> List[Dict[str, str | List[int]]]:
         self.pending_requests = []
         self.status_map = {}
         self.counter = 0
@@ -90,7 +90,7 @@ class LLM(Scheduler):
             self.run_forever()
         except RequestAllFinished:
             pass
-        results = []
+        results: List[Dict[str, str | List[int]]] = []
         for i in range(len(prompts)):
             status = self.status_map[i]
             output_text = self.tokenizer.decode(status.output_ids)
