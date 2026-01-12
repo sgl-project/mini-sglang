@@ -78,7 +78,7 @@ class LLM(Scheduler):
         self,
         prompts: List[str] | List[List[int]],
         sampling_params: List[SamplingParams] | SamplingParams,
-    ) -> List[str]:
+    ) -> List[Dict[str, str | List[int]]]:
         self.pending_requests = []
         self.status_map = {}
         self.counter = 0
@@ -90,7 +90,7 @@ class LLM(Scheduler):
             self.run_forever()
         except RequestAllFinished:
             pass
-        results = []
+        results: List[Dict[str, str | List[int]]] = []
         for i in range(len(prompts)):
             status = self.status_map[i]
             output_text = self.tokenizer.decode(status.output_ids)
