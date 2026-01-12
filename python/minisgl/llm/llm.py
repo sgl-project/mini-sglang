@@ -50,7 +50,7 @@ class LLM(Scheduler):
             raise RequestAllFinished()
         results: List[BaseBackendMsg] = []
         added, sum_input_len = 0, 0
-        for i, (tokens_or_prompt, sampling_params) in enumerate(self.pending_requests):
+        for tokens_or_prompt, sampling_params in self.pending_requests:
             if sum_input_len >= self.prefill_budget:
                 break
             input_ids = self._tokenize_one(tokens_or_prompt)
