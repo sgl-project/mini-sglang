@@ -58,7 +58,7 @@ class LLM(Scheduler):
             uid, added = self.counter + added, added + 1
             results.append(UserMsg(uid=uid, input_ids=input_ids, sampling_params=sampling_params))
             self.status_map[uid] = RequestStatus(
-                uid=i,
+                uid=uid,
                 input_ids=(
                     input_ids.tolist() if isinstance(tokens_or_prompt, str) else tokens_or_prompt
                 ),
