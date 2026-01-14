@@ -65,7 +65,7 @@ class GraphRunner:
             free_memory=free_memory,
         )
         self.attn_backend = attn_backend
-        self.max_graph_bs = max(cuda_graph_bs)
+        self.max_graph_bs = max(cuda_graph_bs) if cuda_graph_bs else 0
         self.graph_bs_list = sorted(cuda_graph_bs)
         self.dummy_req = dummy_req
         self.stream = stream
