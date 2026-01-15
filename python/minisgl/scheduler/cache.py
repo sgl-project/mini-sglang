@@ -58,7 +58,7 @@ class CacheManager:
         indices: torch.Tensor,
     ) -> None:
         in_cache_len = self.manager.insert_prefix(input_ids, indices)
-        self._free(indices[old_handle.cached_len : in_cache_len])
+        self._free(indices[in_cache_len:])
         self.unlock(old_handle)
 
     def check_integrity(self) -> None:
