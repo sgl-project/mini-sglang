@@ -175,8 +175,6 @@ python3 -m sglang.launch_server --model "Qwen/Qwen3-32B" --tp 4 \
 
 ![online](https://lmsys.org/images/blog/minisgl/online.png)
 
-
-
 ## 📚 Learn More
 
 - **[Detailed Features](./docs/features.md)**: Explore all available features and command-line arguments.
