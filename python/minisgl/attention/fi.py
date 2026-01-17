@@ -108,6 +108,7 @@ class FlashInferBackend(BaseAttnBackend):
         )
         self.decode_wrappers = BatchDecodeWithPagedKVCacheWrapper(
             self.float_workspace_buffer,
+            use_tensor_cores=self.use_tensor_cores,
             kv_layout="NHD",
         )
 
