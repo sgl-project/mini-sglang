@@ -75,6 +75,41 @@ Since Mini-SGLang requires Linux-specific dependencies, Windows users should use
 
 </details>
 
+<details>
+<summary><b>🐳 Running with Docker</b></summary>
+
+**Prerequisites**: 
+- [Docker](https://docs.docker.com/get-docker/)
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+
+1. **Build the Docker image**:
+   ```bash
+   docker build -t minisgl .
+   ```
+
+2. **Run the server**:
+   ```bash
+   docker run --gpus all -p 1919:1919 \
+       minisgl --model Qwen/Qwen3-0.6B --host 0.0.0.0
+   ```
+
+3. **Run in interactive shell mode**:
+   ```bash
+   docker run -it --gpus all \
+       minisgl --model Qwen/Qwen3-0.6B --shell
+   ```
+
+4. **Using Docker Volumes for persistent caches** (recommended for faster subsequent startups):
+   ```bash
+   docker run --gpus all -p 1919:1919 \
+       -v huggingface_cache:/app/.cache/huggingface \
+       -v tvm_cache:/app/.cache/tvm-ffi \
+       -v flashinfer_cache:/app/.cache/flashinfer \
+       minisgl --model Qwen/Qwen3-0.6B --host 0.0.0.0
+   ```
+
+</details>
+
 ### 3. Online Serving
 
 Launch an OpenAI-compatible API server with a single command.
