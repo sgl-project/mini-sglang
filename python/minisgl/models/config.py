@@ -63,7 +63,7 @@ class ModelConfig:
                 rotary_dim=head_dim,
                 max_position=config.max_position_embeddings,
                 base=config.rope_theta,
-                scaling=config.rope_scaling,
+                scaling=getattr(config, "rope_scaling", None)
             ),
             num_experts=num_experts,
             num_experts_per_tok=num_experts_per_tok,
