@@ -6,10 +6,11 @@ import triton
 import triton.language as tl
 from minisgl.kernel.moe_impl import fused_moe_kernel_triton
 from minisgl.kernel.triton.fused_moe import moe_sum_reduce_triton
+from minisgl.moe.base import BaseMoeBackend
 from minisgl.moe.utils import select_experts
 from sgl_kernel import gelu_and_mul, silu_and_mul
 from sgl_kernel import moe_align_block_size as sgl_moe_align_block_size
-from minisgl.moe.base import BaseMoeBackend
+
 
 def ceil_div(x: int, y: int) -> int:
     return (x + y - 1) // y
@@ -272,8 +273,6 @@ def fused_experts_impl(
     return out_hidden_states
 
 
-
-
 class FusedMoe(BaseMoeBackend):
 
     def forward(
@@ -305,7 +304,6 @@ class FusedMoe(BaseMoeBackend):
             activation=activation,
             no_combine=no_combine,
         )
-
 
     def fused_experts(
         self,
@@ -396,5 +394,3 @@ class FusedMoe(BaseMoeBackend):
             False,
             routed_scaling_factor,
         )
-
-

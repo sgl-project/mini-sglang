@@ -1,10 +1,11 @@
-from typing import List, Optional
-from minisgl.core import get_global_ctx
+from typing import Optional
+
 import torch
-import torch.nn as nn
+from minisgl.core import get_global_ctx
 from minisgl.distributed import DistributedCommunicator, get_tp_info
 from minisgl.layers.base import BaseOP
-#from minisgl.layers.moe.fused_moe.fused_moe_impl import fused_moe
+
+# from minisgl.layers.moe.fused_moe.fused_moe_impl import fused_moe
 from minisgl.utils import divide_even
 
 
@@ -63,7 +64,6 @@ class MoELayer(BaseOP):
             ),
             requires_grad=False,
         )
-
 
         self.down_proj = torch.nn.Parameter(
             torch.empty(

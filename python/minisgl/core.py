@@ -3,9 +3,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Literal
-from minisgl.moe.base import BaseMoeBackend
 
 import torch
+from minisgl.moe.base import BaseMoeBackend
 
 if TYPE_CHECKING:
     from minisgl.attention import BaseAttnBackend, BaseAttnMetadata

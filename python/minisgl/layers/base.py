@@ -87,7 +87,6 @@ class BaseOP:
             raise RuntimeError(f"Unexpected keys in state_dict: {list(state_dict.keys())}")
 
 
-
 class StateLessOP(BaseOP):
     def __init__(self):
         super().__init__()
