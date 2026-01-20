@@ -1,26 +1,27 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
-import torch
 from minisgl.utils import Registry, init_logger
 
 from .base import BaseMoeBackend
+
 logger = init_logger(__name__)
 
 
 class MoeBackendCreator(Protocol):
-    def __call__(
-        self
-    ) -> BaseMoeBackend: ...
+    def __call__(self) -> BaseMoeBackend: ...
+
 
 SUPPORTED_MOE_BACKENDS = Registry[MoeBackendCreator]("MoE Backend")
+
 
 @SUPPORTED_MOE_BACKENDS.register("fused")
 def create_fused_moe_backend():
     from .fused import FusedMoe
 
     return FusedMoe()
+
 
 def resolve_auto_backend() -> str:
     return "fused"
@@ -33,6 +34,7 @@ def validate_backend(backend: str):
             raise ValueError(f"Unsupported MoE backend: {backend}. Supported backends: {supported}")
     return True
 
+
 def create_moe_backend(
     backend: str,
 ) -> BaseMoeBackend:
@@ -44,7 +46,6 @@ def create_moe_backend(
         logger.info(f"Selected MoE backend: {backend}")
 
     return SUPPORTED_MOE_BACKENDS[backend]()
-
 
 
 __all__ = [

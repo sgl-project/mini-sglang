@@ -33,7 +33,7 @@ class ModelConfig:
     moe_intermediate_size: int
     norm_topk_prob: bool
     model_type: str
-    architectures: List[str]
+    architectures: list[str]
 
     @classmethod
     def from_hf(cls, config: LlamaConfig) -> ModelConfig:
@@ -63,7 +63,7 @@ class ModelConfig:
                 rotary_dim=head_dim,
                 max_position=config.max_position_embeddings,
                 base=config.rope_theta,
-                scaling=getattr(config, "rope_scaling", None)
+                scaling=getattr(config, "rope_scaling", None),
             ),
             num_experts=num_experts,
             num_experts_per_tok=num_experts_per_tok,
