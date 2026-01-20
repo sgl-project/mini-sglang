@@ -133,7 +133,4 @@ class OPList(BaseOP, Generic[T]):
             op.load_state_dict(state_dict, prefix=_concat_prefix(prefix, str(i)), _internal=True)
 
         if not _internal and state_dict:
-            keys = list(state_dict.keys())
-            raise RuntimeError(
-                f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})"
-            )
+            raise RuntimeError(f"Unexpected keys in state_dict: {list(state_dict.keys())}")
