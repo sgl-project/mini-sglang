@@ -5,7 +5,7 @@ from minisgl.core import get_global_ctx
 from minisgl.distributed import DistributedCommunicator, get_tp_info
 from minisgl.layers.base import BaseOP
 
-# from minisgl.layers.moe.fused_moe.fused_moe_impl import fused_moe
+
 from minisgl.utils import divide_even
 
 
