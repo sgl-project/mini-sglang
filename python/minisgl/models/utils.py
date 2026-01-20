@@ -12,6 +12,8 @@ from minisgl.layers import (
     RMSNorm,
     silu_and_mul,
 )
+from minisgl.layers.linear import LinearReplicated
+from minisgl.layers.moe import MoELayer
 from minisgl.models import ModelConfig
 from minisgl.utils import nvtx_annotate
 
@@ -46,6 +48,34 @@ class GatedMLP(BaseOP):
         y = self.act_fn(gate_up)
         del gate_up
         return self.down_proj.forward(y)
+
+
+class MoEMLP(BaseOP):
+    def __init__(self, config: ModelConfig):
+        self.experts = MoELayer(
+            num_experts=config.num_experts,
+            top_k=config.num_experts_per_tok,
+            hidden_size=config.hidden_size,
+            intermediate_size=config.moe_intermediate_size,
+            renormalize=config.norm_topk_prob
+        )
+        self.gate = LinearReplicated(
+            config.hidden_size,
+            config.num_experts,
+            has_bias=False,
+        )
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        num_tokens, hidden_dim = hidden_states.shape
+        hidden_states = hidden_states.view(-1, hidden_dim)
+
+        router_logits = self.gate.forward(hidden_states)
+        final_hidden_states = self.experts.forward(
+            hidden_states=hidden_states, router_logits=router_logits
+        )
+        final_hidden_states = final_hidden_states.view(num_tokens, hidden_dim)
+
+        return final_hidden_states
 
 
 class RopeAttn(BaseOP):
@@ -95,4 +125,4 @@ class RopeAttn(BaseOP):
         return self.o_proj.forward(o)
 
 
-__all__ = ["GatedMLP", "RopeAttn"]
+__all__ = ["GatedMLP", "RopeAttn", "MoEMLP"]
