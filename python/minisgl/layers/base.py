@@ -84,7 +84,7 @@ class BaseOP:
                 )
 
         if not _internal and state_dict:
-            raise RuntimeError(f"Unexpected keys in state_dict: {state_dict.keys()}")
+            raise RuntimeError(f"Unexpected keys in state_dict: {list(state_dict.keys())}")
 
 
 
