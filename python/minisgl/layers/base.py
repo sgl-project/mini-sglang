@@ -84,10 +84,8 @@ class BaseOP:
                 )
 
         if not _internal and state_dict:
-            keys = list(state_dict.keys())
-            raise RuntimeError(
-                f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})"
-            )
+            raise RuntimeError(f"Unexpected keys in state_dict: {state_dict.keys()}")
+
 
 
 class StateLessOP(BaseOP):
@@ -103,10 +101,7 @@ class StateLessOP(BaseOP):
     ) -> None:
         if not _internal and state_dict:
             _ = prefix
-            keys = list(state_dict.keys())
-            raise RuntimeError(
-                f"Unexpected keys in state_dict: {len(keys)} keys (first 10: {keys[:10]})"
-            )
+            raise RuntimeError(f"Unexpected keys in state_dict: {list(state_dict.keys())}")
 
     def state_dict(self, *, prefix: str = "", result: _STATE_DICT | None = None) -> _STATE_DICT:
         _ = prefix
