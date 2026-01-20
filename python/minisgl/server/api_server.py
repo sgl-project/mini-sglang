@@ -244,14 +244,22 @@ async def v1_root():
 
 @app.post("/v1/chat/completions")
 async def v1_completions(req: OpenAICompletionRequest):
+    """
+    OpenAI-compatible chat completions endpoint.
+    
+    Supports both streaming (SSE) and non-streaming (JSON) responses
+    based on the 'stream' field in the request.
+    """
     state = get_global_state()
+    
+    # Build prompt from messages or raw prompt
     if req.messages:
         prompt = [msg.model_dump() for msg in req.messages]
     else:
         assert req.prompt is not None, "Either 'messages' or 'prompt' must be provided"
         prompt = req.prompt
 
-    # TODO: support more sampling parameters
+    # Create new user and send tokenization request
     uid = state.new_user()
     await state.send_one(
         TokenizeMsg(
@@ -270,11 +278,43 @@ async def v1_completions(req: OpenAICompletionRequest):
     async def _abort():
         await state.abort_user(uid)
 
-    return StreamingResponse(
-        state.stream_chat_completions(uid),
-        media_type="text/event-stream",
-        background=BackgroundTask(lambda: _abort),
-    )
+    if req.stream:
+        # ===== Streaming Response (SSE) =====
+        return StreamingResponse(
+            state.stream_chat_completions(uid),
+            media_type="text/event-stream",
+            background=BackgroundTask(lambda: _abort),
+        )
+    else:
+        # ===== Non-Streaming Response (JSON) =====
+        full_content = ""
+        async for ack in state.wait_for_ack(uid):
+            if ack.incremental_output:
+                full_content += ack.incremental_output
+            if ack.finished:
+                break
+
+        return {
+            "id": f"chatcmpl-{uid}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": req.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": full_content,
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 0,  # TODO: implement token counting
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            },
+        }
 
 
 @app.get("/v1/models")
