@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Literal
+from minisgl.moe.base import BaseMoeBackend
 
 import torch
 
@@ -98,6 +99,7 @@ class Batch:
 class Context:
     page_size: int
     attn_backend: BaseAttnBackend
+    moe_backend: BaseMoeBackend
     _batch: Batch | None = field(default=None, init=False)
 
     @property

@@ -208,7 +208,8 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         "--moe-backend",
         type=validate_moe_backend,
         default=ServerArgs.moe_backend,
-        help="The MoE backend to use.",
+        help="The MoE backend to use. default is auto, supported backends are fused.",
+        choices=["auto", "fused"],
     )
 
     parser.add_argument(

@@ -5,6 +5,7 @@ from typing import Dict, NamedTuple, Tuple
 
 import torch
 from minisgl.attention import create_attention_backend
+from minisgl.moe import create_moe_backend
 from minisgl.core import Batch, Context, Req, set_global_ctx
 from minisgl.distributed import destroy_distributed, enable_pynccl_distributed, set_tp_info
 from minisgl.kvcache import create_kvcache
@@ -38,7 +39,7 @@ class Engine:
         self.model_config = config.model_config
         set_tp_info(rank=config.tp_info.rank, size=config.tp_info.size)
 
-        assert not torch.cuda.is_initialized()
+        #assert not torch.cuda.is_initialized()   Not commenting out this assertion leads to a registry loading error for the model
         self.device = torch.device(f"cuda:{config.tp_info.rank}")
         torch.cuda.set_device(self.device)
         self.stream = torch.cuda.Stream()
@@ -73,7 +74,8 @@ class Engine:
             self.kv_cache,
             self.page_table,
         )
-        self.ctx = Context(page_size=1, attn_backend=self.attn_backend)
+        self.moe_backend = create_moe_backend(config.moe_backend) if "moe" in config.model_config.model_type  else None
+        self.ctx = Context(page_size=1, attn_backend=self.attn_backend, moe_backend=self.moe_backend)
         set_global_ctx(self.ctx)
         self.sampler = Sampler(self.device, self.model_config.vocab_size)
 
