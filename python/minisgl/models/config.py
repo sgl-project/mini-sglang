@@ -28,12 +28,14 @@ class ModelConfig:
     rotary_config: RotaryConfig
     hidden_act: str
     tie_word_embeddings: bool
+    sliding_window: int | None
 
     @classmethod
     def from_hf(cls, config: LlamaConfig) -> ModelConfig:
         num_kv_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         tie_word_embeddings = getattr(config, "tie_word_embeddings", False)
+        sliding_window = getattr(config, "sliding_window", None)
         return cls(
             num_layers=config.num_hidden_layers,
             num_qo_heads=config.num_attention_heads,
