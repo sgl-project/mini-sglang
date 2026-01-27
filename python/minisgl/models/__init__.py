@@ -15,6 +15,10 @@ def create_model(model_path: str, model_config: ModelConfig) -> BaseLLMModel:
         from .qwen3 import Qwen3ForCausalLM
 
         return Qwen3ForCausalLM(model_config)
+    elif "mistral" in model_name:
+        from .llama import LlamaForCausalLM
+
+        return LlamaForCausalLM(model_config)
     else:
         raise ValueError(f"Unsupported model: {model_path}")
 
