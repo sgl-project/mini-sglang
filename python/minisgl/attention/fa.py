@@ -45,6 +45,7 @@ class FlashAttentionBackend(BaseAttnBackend):
         self.capture_bs: List[int] = []
         self.scale = config.head_dim**-0.5
         self.page_table = page_table
+        self.sliding_window = config.sliding_window 
 
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, layer_id: int, batch: Batch
@@ -62,6 +63,7 @@ class FlashAttentionBackend(BaseAttnBackend):
             cu_seqlens_k_new=metadata.cu_seqlens_k,
             max_seqlen_q=metadata.max_seqlen_q,
             softmax_scale=self.scale,
+            window_size = (self.sliding_window, 0) if self.sliding_window is not None else (-1,-1)
         )
 
     def prepare_metadata(self, batch: Batch) -> None:
