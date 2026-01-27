@@ -47,6 +47,7 @@ class ModelConfig:
             hidden_act=config.hidden_act,
             rms_norm_eps=config.rms_norm_eps,
             tie_word_embeddings=tie_word_embeddings,
+            sliding_window=sliding_window,
             rotary_config=RotaryConfig(
                 head_dim=head_dim,
                 rotary_dim=head_dim,
