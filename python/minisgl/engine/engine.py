@@ -9,7 +9,7 @@ from minisgl.core import Batch, Context, Req, set_global_ctx
 from minisgl.distributed import destroy_distributed, enable_pynccl_distributed, set_tp_info
 from minisgl.kvcache import create_kvcache
 from minisgl.layers import set_rope_device
-from minisgl.models import create_model, load_hf_weight
+from minisgl.models import create_model, load_weight
 from minisgl.moe import create_moe_backend
 from minisgl.utils import div_even, init_logger, torch_dtype
 
@@ -141,7 +141,7 @@ class Engine:
         else:
             return {
                 k: v.to(self.dtype)
-                for k, v in load_hf_weight(config.model_path, self.device).items()
+                for k, v in load_weight(config.model_path, self.device, config.model_source).items()
             }
 
     def _determine_num_pages(self, old_free_memory: int, config: EngineConfig) -> int:

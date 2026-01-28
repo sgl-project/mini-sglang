@@ -10,11 +10,13 @@ from .mp import (
     ZmqPushQueue,
     ZmqSubQueue,
 )
+from .ms import cached_load_ms_config
 from .registry import Registry
 from .torch_utils import nvtx_annotate, torch_dtype
 
 __all__ = [
     "cached_load_hf_config",
+    "cached_load_ms_config",
     "init_logger",
     "is_arch_supported",
     "is_sm90_supported",

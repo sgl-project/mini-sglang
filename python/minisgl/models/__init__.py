@@ -1,7 +1,7 @@
 from .base import BaseLLMModel
 from .config import ModelConfig, RotaryConfig
 from .register import get_model_class
-from .weight import load_hf_weight
+from .weight import load_weight
 
 
 def create_model(model_config: ModelConfig) -> BaseLLMModel:
