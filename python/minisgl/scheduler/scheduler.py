@@ -65,7 +65,13 @@ class Scheduler(SchedulerIOMixin):
 
         self.tp_info = config.tp_info
         self.finished_reqs: Set[Req] = set()
-        self.tokenizer = AutoTokenizer.from_pretrained(config.model_path)
+        if config.model_source == "modelscope":
+            from modelscope import snapshot_download
+
+            tokenizer_path = snapshot_download(config.model_path)
+        else:
+            tokenizer_path = config.model_path
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
         self.eos_token_id = self.tokenizer.eos_token_id
         self.page_table = self.engine.page_table
         self.token_pool = self.table_manager.token_pool

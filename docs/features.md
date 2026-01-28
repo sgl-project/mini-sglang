@@ -11,7 +11,7 @@ For demonstration and testing purposes, an interactive shell mode is available. 
 Example:
 
 ```bash
-python -m minisgl --model "Qwen/Qwen3-0.6B" --shell
+python -m minisgl --model-path "Qwen/Qwen3-0.6B" --shell
 ```
 
 ## Distributed Serving
