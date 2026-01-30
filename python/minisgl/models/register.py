@@ -1,19 +1,20 @@
-from .llama import LlamaForCausalLM
-from .qwen3 import Qwen3ForCausalLM
-from .qwen3_moe import Qwen3MoeForCausalLM
-from .config import ModelConfig, RotaryConfig
+import importlib
+from .config import ModelConfig
 
-model_map = {
-    "LlamaForCausalLM": LlamaForCausalLM,
-    "Qwen3ForCausalLM": Qwen3ForCausalLM,
-    "Qwen3MoeForCausalLM": Qwen3MoeForCausalLM,
+_MODEL_REGISTRY = {
+    "LlamaForCausalLM": (".llama", "LlamaForCausalLM"),
+    "Qwen3ForCausalLM": (".qwen3", "Qwen3ForCausalLM"),
+    "Qwen3MoeForCausalLM": (".qwen3_moe", "Qwen3MoeForCausalLM"),
 }
 
 def get_model_class(model_architecture: str, model_config: ModelConfig):
-    if model_architecture not in model_map:
+    if model_architecture not in _MODEL_REGISTRY:
         raise ValueError(f"Model architecture {model_architecture} not supported")
-    return model_map[model_architecture](model_config)
+    
+    module_path, class_name = _MODEL_REGISTRY[model_architecture]
+    module = importlib.import_module(module_path, package=__package__)
+    model_cls = getattr(module, class_name)
+    
+    return model_cls(model_config)
 
-__all__ = [
-    "get_model_class",
-]
+__all__ = ["get_model_class"]

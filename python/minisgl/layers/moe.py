@@ -22,8 +22,6 @@ class MoELayer(BaseOP):
         tp_size: Optional[int] = None,
         activation: str = "silu",
         apply_router_weight_on_input: bool = False,
-        inplace: bool = True,
-        no_combine: bool = False,
     ):
         super().__init__()
         if params_dtype is None:
@@ -49,8 +47,6 @@ class MoELayer(BaseOP):
         self.renormalize = renormalize
         self.activation = activation
         self.apply_router_weight_on_input = apply_router_weight_on_input
-        self.inplace = inplace
-        self.no_combine = no_combine
         self.layer_id = layer_id
 
         intermediate_size_per_partition = divide_even(intermediate_size, self.tp_size)
@@ -85,9 +81,7 @@ class MoELayer(BaseOP):
             gating_output=router_logits,
             topk=self.top_k,
             renormalize=self.renormalize,
-            inplace=self.inplace,
             activation=self.activation,
-            no_combine=self.no_combine,
         )
 
         if self.tp_size > 1:

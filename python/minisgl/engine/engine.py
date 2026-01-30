@@ -12,7 +12,6 @@ from minisgl.layers import set_rope_device
 from minisgl.models import create_model, load_hf_weight
 from minisgl.moe import create_moe_backend
 from minisgl.utils import divide_even, init_logger, torch_dtype
-
 from .config import EngineConfig
 from .graph import GraphRunner, get_free_memory, mem_GB
 from .sample import BatchSamplingArgs, Sampler
@@ -38,8 +37,7 @@ class Engine:
     def __init__(self, config: EngineConfig):
         self.model_config = config.model_config
         set_tp_info(rank=config.tp_info.rank, size=config.tp_info.size)
-
-        # assert not torch.cuda.is_initialized()   Not commenting out this assertion leads to a registry loading error for the model
+        assert not torch.cuda.is_initialized()
         self.device = torch.device(f"cuda:{config.tp_info.rank}")
         torch.cuda.set_device(self.device)
         self.stream = torch.cuda.Stream()

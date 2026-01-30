@@ -15,7 +15,6 @@ def _moe_sum_reduce_kernel(
     token_num: int,
     topk_num: int,
     hidden_dim: int,
-    routed_scaling_factor: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_DIM: tl.constexpr,
     NUM_STAGE: tl.constexpr,
@@ -41,7 +40,6 @@ def _moe_sum_reduce_kernel(
         for i in tl.range(0, topk_num, num_stages=NUM_STAGE):
             tmp = tl.load(input_t_ptr + i * input_stride_1, mask=offs_dim < dim_end, other=0.0)
             accumulator += tmp
-        accumulator = accumulator * routed_scaling_factor
         store_t_ptr = output_ptr + token_index * output_stride_0 + offs_dim
         tl.store(
             store_t_ptr,
@@ -196,7 +194,7 @@ def fused_moe_kernel(
     tl.store(c_ptrs, accumulator, mask=c_mask)
 
 
-def moe_sum_reduce_triton(input: torch.Tensor, output: torch.Tensor, routed_scaling_factor: float):
+def moe_sum_reduce_triton(input: torch.Tensor, output: torch.Tensor):
     assert input.is_contiguous()
     assert output.is_contiguous()
 
@@ -221,7 +219,6 @@ def moe_sum_reduce_triton(input: torch.Tensor, output: torch.Tensor, routed_scal
         token_num=token_num,
         topk_num=topk_num,
         hidden_dim=hidden_dim,
-        routed_scaling_factor=routed_scaling_factor,
         BLOCK_M=BLOCK_M,
         BLOCK_DIM=BLOCK_DIM,
         NUM_STAGE=NUM_STAGE,

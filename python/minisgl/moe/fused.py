@@ -11,20 +11,16 @@ from minisgl.moe.utils import select_experts
 from sgl_kernel import gelu_and_mul, silu_and_mul
 from sgl_kernel import moe_align_block_size as sgl_moe_align_block_size
 
-
 def ceil_div(x: int, y: int) -> int:
     return (x + y - 1) // y
-
 
 @torch.compile
 def moe_sum_reduce_torch_compile(x, out, routed_scaling_factor):
     torch.sum(x, dim=1, out=out)
     out.mul_(routed_scaling_factor)
 
-
 def is_cuda():
     return torch.cuda.is_available() and torch.version.cuda
-
 
 def moe_align_block_size(
     topk_ids: torch.Tensor, block_size: int, num_experts: int
@@ -71,9 +67,7 @@ def moe_align_block_size(
     max_num_m_blocks = triton.cdiv(max_num_tokens_padded, block_size)
     expert_ids = torch.empty((max_num_m_blocks,), dtype=torch.int32, device=topk_ids.device)
     num_tokens_post_pad = torch.empty((1), dtype=torch.int32, device=topk_ids.device)
-
     cumsum_buffer = torch.empty((num_experts + 2,), dtype=torch.int32, device=topk_ids.device)
-
     sgl_moe_align_block_size(
         topk_ids,
         num_experts + 1,
@@ -85,7 +79,6 @@ def moe_align_block_size(
         True,
     )
     return sorted_ids, expert_ids, num_tokens_post_pad
-
 
 def get_default_config(
     M: int,
@@ -120,8 +113,8 @@ def try_get_optimal_moe_config(
     M: int,
     is_marlin: bool = False,
 ):
-    E, _, N = w2_shape
 
+    E, _, N = w2_shape
     config = get_default_config(M, E, N, w1_shape[2], top_k, is_marlin)
     return config
 
@@ -132,11 +125,8 @@ def fused_experts_impl(
     w2: torch.Tensor,
     topk_weights: torch.Tensor,
     topk_ids: torch.Tensor,
-    inplace: bool = False,
     activation: str = "silu",
     apply_router_weight_on_input: bool = False,
-    no_combine: bool = False,
-    routed_scaling_factor: Optional[float] = None,
 ):
 
     padded_size = 0
@@ -178,17 +168,8 @@ def fused_experts_impl(
     )
 
     compute_type = tl.bfloat16 if hidden_states.dtype == torch.bfloat16 else tl.float16
-    if no_combine:
-        assert not inplace
-        out_hidden_states = torch.empty(
-            (num_tokens, topk_ids.shape[1], w2.shape[1]),
-            device=hidden_states.device,
-            dtype=hidden_states.dtype,
-        )
-    elif inplace:
-        out_hidden_states = hidden_states
-    else:
-        out_hidden_states = torch.empty_like(hidden_states)
+
+    out_hidden_states = hidden_states
     curr_hidden_states = hidden_states
     tokens_num, _ = curr_hidden_states.shape
     begin_token_idx, end_token_idx = 0, num_tokens
@@ -221,24 +202,15 @@ def fused_experts_impl(
     )
 
     if activation == "silu":
-
         silu_and_mul(intermediate_cache1.view(-1, N), intermediate_cache2)
-
     elif activation == "gelu":
-
         gelu_and_mul(intermediate_cache1.view(-1, N), intermediate_cache2)
-
     else:
         raise ValueError(f"Unsupported activation: {activation=}")
-
     fused_moe_kernel_triton(
         intermediate_cache2,
         w2,
-        (
-            intermediate_cache3
-            if not no_combine and topk_ids.shape[1] != 1
-            else out_hidden_states[begin_token_idx:end_token_idx].unsqueeze(0)
-        ),
+        (intermediate_cache3),
         curr_topk_weights,
         curr_topk_ids,
         sorted_token_ids,
@@ -250,28 +222,11 @@ def fused_experts_impl(
         compute_type=compute_type,
     )
 
-    if routed_scaling_factor is None:
-        routed_scaling_factor = 1.0
-
-    if no_combine:
-        pass
-
-    if topk_ids.shape[1] == 1 and routed_scaling_factor == 1.0:
-        pass  # we write directly into out_hidden_states
-    elif topk_ids.shape[1] == 2 and routed_scaling_factor == 1.0:
-        torch.add(
-            intermediate_cache3[:, 0],
-            intermediate_cache3[:, 1],
-            out=out_hidden_states[begin_token_idx:end_token_idx],
-        ).squeeze(dim=1)
-    else:
-        moe_sum_reduce_triton(
-            intermediate_cache3,
-            out_hidden_states[begin_token_idx:end_token_idx],
-            routed_scaling_factor,
-        )
+    moe_sum_reduce_triton(
+        intermediate_cache3,
+        out_hidden_states[begin_token_idx:end_token_idx],
+    )
     return out_hidden_states
-
 
 class FusedMoe(BaseMoeBackend):
 
@@ -283,11 +238,9 @@ class FusedMoe(BaseMoeBackend):
         gating_output: torch.Tensor,
         topk: int,
         renormalize: bool,
-        inplace: bool = False,
         activation: str = "silu",
-        no_combine: bool = False,
     ) -> torch.Tensor:
-
+    
         topk_weights, topk_ids = select_experts(
             hidden_states=hidden_states,
             router_logits=gating_output,
@@ -300,9 +253,7 @@ class FusedMoe(BaseMoeBackend):
             w2=w2,
             topk_weights=topk_weights,
             topk_ids=topk_ids,
-            inplace=inplace,
             activation=activation,
-            no_combine=no_combine,
         )
 
     def fused_experts(
@@ -312,75 +263,9 @@ class FusedMoe(BaseMoeBackend):
         w2: torch.Tensor,
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
-        inplace: bool = False,
         activation: str = "silu",
         apply_router_weight_on_input: bool = False,
-        no_combine: bool = False,
-        routed_scaling_factor: Optional[float] = None,
     ):
-
-        if inplace:
-            assert not no_combine, "no combine + inplace makes no sense"
-            self.inplace_fused_experts(
-                hidden_states,
-                w1,
-                w2,
-                topk_weights,
-                topk_ids,
-                activation,
-                apply_router_weight_on_input,
-                routed_scaling_factor,
-            )
-            return hidden_states
-        else:
-            return self.outplace_fused_experts(
-                hidden_states,
-                w1,
-                w2,
-                topk_weights,
-                topk_ids,
-                activation,
-                apply_router_weight_on_input,
-                no_combine=no_combine,
-                routed_scaling_factor=routed_scaling_factor,
-            )
-
-    def outplace_fused_experts(
-        self,
-        hidden_states: torch.Tensor,
-        w1: torch.Tensor,
-        w2: torch.Tensor,
-        topk_weights: torch.Tensor,
-        topk_ids: torch.Tensor,
-        activation: str = "silu",
-        apply_router_weight_on_input: bool = False,
-        no_combine: bool = False,
-        routed_scaling_factor: Optional[float] = None,
-    ) -> torch.Tensor:
-        return fused_experts_impl(
-            hidden_states,
-            w1,
-            w2,
-            topk_weights,
-            topk_ids,
-            False,
-            activation,
-            apply_router_weight_on_input,
-            no_combine=no_combine,
-            routed_scaling_factor=routed_scaling_factor,
-        )
-
-    def inplace_fused_experts(
-        self,
-        hidden_states: torch.Tensor,
-        w1: torch.Tensor,
-        w2: torch.Tensor,
-        topk_weights: torch.Tensor,
-        topk_ids: torch.Tensor,
-        activation: str = "silu",
-        apply_router_weight_on_input: bool = False,
-        routed_scaling_factor: Optional[float] = None,
-    ) -> None:
 
         fused_experts_impl(
             hidden_states,
@@ -388,9 +273,10 @@ class FusedMoe(BaseMoeBackend):
             w2,
             topk_weights,
             topk_ids,
-            True,
             activation,
             apply_router_weight_on_input,
-            False,
-            routed_scaling_factor,
         )
+        return hidden_states
+
+
+
