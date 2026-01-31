@@ -17,8 +17,8 @@ logger = init_logger(__name__)
 
 @dataclass(frozen=True)
 class BenchmarkTrace:
-    timestamp: float
-    message: str  # unit (second)
+    timestamp: float  # unit (second)
+    message: str
     output_length: int  # output length in tokens
     input_length: int | None = None  # input length in tokens, optional
 
