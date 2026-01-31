@@ -18,7 +18,7 @@ from transformers import AutoTokenizer
 
 logger = init_logger(__name__)
 
-URL = "https://raw.githubusercontent.com/alibaba-edu/qwen-bailian-usagetraces-anon/refs/heads/main/qwen_traceA_blksz_16.jsonl"
+URL = "https://media.githubusercontent.com/media/alibaba-edu/qwen-bailian-usagetraces-anon/refs/heads/main/qwen_traceA_blksz_16.jsonl"
 
 
 def download_qwen_trace(url: str) -> str:
