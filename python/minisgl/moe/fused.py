@@ -86,7 +86,6 @@ def get_default_config(
     N: int,
     K: int,
     topk: int,
-    is_marlin: bool,
 ) -> Dict[str, int]:
 
     config = {
@@ -95,8 +94,7 @@ def get_default_config(
         "BLOCK_SIZE_K": 32,
         "GROUP_SIZE_M": 8,
     }
-    # A heuristic: fused marlin works faster with this config for small M
-    if M <= E or (is_marlin and M <= 32):
+    if M <= E:
         config = {
             "BLOCK_SIZE_M": 16,
             "BLOCK_SIZE_N": 32,
@@ -111,11 +109,9 @@ def try_get_optimal_moe_config(
     w2_shape: Tuple[int, ...],
     top_k: int,
     M: int,
-    is_marlin: bool = False,
 ):
-
     E, _, N = w2_shape
-    config = get_default_config(M, E, N, w1_shape[2], top_k, is_marlin)
+    config = get_default_config(M, E, N, w1_shape[2], top_k)
     return config
 
 
@@ -138,10 +134,7 @@ def fused_experts_impl(
     assert hidden_states.dtype in [torch.float32, torch.float16, torch.bfloat16]
     num_tokens, _ = hidden_states.shape
     E, N, _ = w1.shape
-
-    CHUNK_SIZE = 64 * 1024
-    M = min(num_tokens, CHUNK_SIZE)
-
+    M = num_tokens
     get_config_func = functools.partial(
         try_get_optimal_moe_config,
         w1.shape,
