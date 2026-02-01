@@ -40,7 +40,7 @@ class ModelConfig:
         return "moe" in self.model_type
 
     @classmethod
-    def from_hf(cls, config: LlamaConfig) -> ModelConfig:
+    def from_model_source(cls, config: LlamaConfig) -> ModelConfig:
         num_kv_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         tie_word_embeddings = getattr(config, "tie_word_embeddings", False)
@@ -76,3 +76,11 @@ class ModelConfig:
             model_type=model_type,
             architectures=architectures,
         )
+
+    @classmethod
+    def from_hf(cls, config: LlamaConfig) -> ModelConfig:
+        return cls.from_model_source(config)
+
+    @classmethod
+    def from_ms(cls, config: LlamaConfig) -> ModelConfig:
+        return cls.from_model_source(config)

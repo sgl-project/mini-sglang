@@ -31,7 +31,7 @@ class EngineConfig:
     num_page_override: int | None = None  # if not None, will override the number of pages
 
     @cached_property
-    def hf_config(self):
+    def model_source_config(self):
         if self.model_source == "modelscope":
             from minisgl.utils import cached_load_ms_config
 
@@ -41,10 +41,18 @@ class EngineConfig:
         return cached_load_hf_config(self.model_path)
 
     @cached_property
+    def hf_config(self):
+        return self.model_source_config
+
+    @cached_property
+    def ms_config(self):
+        return self.model_source_config
+
+    @cached_property
     def model_config(self) -> ModelConfig:
         from minisgl.models import ModelConfig
 
-        return ModelConfig.from_hf(self.hf_config)
+        return ModelConfig.from_model_source(self.model_source_config)
 
     @property
     def max_seq_len(self) -> int:
