@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .base import BaseLLMModel
 from .config import ModelConfig, RotaryConfig
-from .weight import load_hf_weight
+from .weight import load_weight
 
 
 def create_model(model_path: str, model_config: ModelConfig) -> BaseLLMModel:
@@ -19,4 +19,4 @@ def create_model(model_path: str, model_config: ModelConfig) -> BaseLLMModel:
         raise ValueError(f"Unsupported model: {model_path}")
 
 
-__all__ = ["BaseLLMModel", "load_hf_weight", "create_model", "ModelConfig", "RotaryConfig"]
+__all__ = ["BaseLLMModel", "load_weight", "create_model", "ModelConfig", "RotaryConfig"]

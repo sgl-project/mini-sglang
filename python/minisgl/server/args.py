@@ -8,7 +8,7 @@ from typing import List, Tuple
 import torch
 from minisgl.distributed import DistributedInfo
 from minisgl.scheduler import SchedulerConfig
-from minisgl.utils import cached_load_hf_config, init_logger
+from minisgl.utils import init_logger
 
 
 @dataclass(frozen=True)
@@ -187,6 +187,14 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     )
 
     parser.add_argument(
+        "--model-source",
+        type=str,
+        default=ServerArgs.model_source,
+        choices=["huggingface", "modelscope"],
+        help="The source to download model from. Either 'huggingface' or 'modelscope'.",
+    )
+
+    parser.add_argument(
         "--cache-type",
         type=str,
         default=ServerArgs.cache_type,
@@ -221,7 +229,14 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     if (dtype_str := kwargs["dtype"]) != "auto":
         kwargs["dtype"] = DTYPE_MAP[dtype_str]
     else:
-        dtype_or_str = cached_load_hf_config(kwargs["model_path"]).dtype
+        if kwargs["model_source"] == "modelscope":
+            from minisgl.utils import cached_load_ms_config
+
+            dtype_or_str = cached_load_ms_config(kwargs["model_path"]).dtype
+        else:
+            from minisgl.utils import cached_load_hf_config
+
+            dtype_or_str = cached_load_hf_config(kwargs["model_path"]).dtype
         if isinstance(dtype_or_str, str):
             kwargs["dtype"] = DTYPE_MAP[dtype_or_str]
         else:

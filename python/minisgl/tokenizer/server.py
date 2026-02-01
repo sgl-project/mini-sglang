@@ -36,12 +36,17 @@ def tokenize_worker(
     frontend_addr: str,
     local_bs: int,
     tokenizer_id: int = -1,
+    model_source: str = "huggingface",
     ack_queue: mp.Queue[str] | None = None,
 ) -> None:
     send_backend = ZmqPushQueue(backend_addr, create=False, encoder=BaseBackendMsg.encoder)
     send_frontend = ZmqPushQueue(frontend_addr, create=False, encoder=BaseFrontendMsg.encoder)
     recv_listener = ZmqPullQueue(addr, create=create, decoder=BatchTokenizerMsg.decoder)
     assert local_bs > 0
+    if model_source == "modelscope":
+        from modelscope import snapshot_download
+
+        tokenizer_path = snapshot_download(tokenizer_path)
     tokenizer: LlamaTokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
     logger = init_logger(__name__, f"tokenizer_{tokenizer_id}")
 
