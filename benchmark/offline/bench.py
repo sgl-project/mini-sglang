@@ -22,7 +22,7 @@ def main():
     )
 
     prompt_token_ids = [
-        [randint(0, tokenizer.vocab_size) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)
+        [randint(0, tokenizer.vocab_size - 1) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)
     ]
     sampling_params = [
         SamplingParams(temperature=0.6, ignore_eos=True, max_tokens=randint(100, max_ouput_len))
