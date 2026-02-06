@@ -63,7 +63,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     """
     from minisgl.attention import SUPPORTED_ATTENTION_BACKENDS, validate_attn_backend
     from minisgl.kvcache import SUPPORTED_CACHE_MANAGER
-    from minisgl.moe import SUPPORTED_MOE_BACKENDS, validate_moe_backend
+    from minisgl.moe import SUPPORTED_MOE_BACKENDS
 
     parser = argparse.ArgumentParser(description="MiniSGL Server Arguments")
 
@@ -198,7 +198,6 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
 
     parser.add_argument(
         "--moe-backend",
-        type=validate_moe_backend,
         default=ServerArgs.moe_backend,
         choices=["auto"] + SUPPORTED_MOE_BACKENDS.supported_names(),
         help="The MoE backend to use.",
