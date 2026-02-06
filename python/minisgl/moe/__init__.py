@@ -27,10 +27,10 @@ def resolve_auto_backend() -> str:
     return "fused"
 
 
-def validate_moe_backend(backend: str) -> str:
+def validate_moe_backend(backend: str) -> bool:
     if backend != "auto":
         SUPPORTED_MOE_BACKENDS.assert_supported(backend)
-    return backend
+    return True
 
 
 def create_moe_backend(backend: str) -> BaseMoeBackend:
