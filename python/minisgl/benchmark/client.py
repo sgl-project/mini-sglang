@@ -17,8 +17,8 @@ logger = init_logger(__name__)
 
 @dataclass(frozen=True)
 class BenchmarkTrace:
-    timestamp: float
-    message: str  # unit (second)
+    timestamp: float  # unit (second)
+    message: str
     output_length: int  # output length in tokens
     input_length: int | None = None  # input length in tokens, optional
 
@@ -183,7 +183,7 @@ def make_console(num_requests: int, sum_output_length: int, use_pbar: bool = Tru
 def generate_prompt(tokenizer: Any, n: int) -> str:
     """Generate a prompt of approximately `n` tokens using the provided tokenizer."""
     vocab_size = tokenizer.vocab_size // 2
-    token_ids = [random.randint(0, vocab_size) for _ in range(n - 1)]
+    token_ids = [random.randint(0, vocab_size) for _ in range(n)]
 
     for _ in range(64):
         prompt = tokenizer.decode(token_ids)
