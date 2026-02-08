@@ -8,6 +8,7 @@ from minisgl.core import Batch, Req, get_global_ctx
 from minisgl.distributed import get_tp_info
 from minisgl.utils import init_logger
 from tqdm import tqdm
+from minisgl.utils.graph_utils import gdebug
 
 if TYPE_CHECKING:
     from minisgl.attention import BaseAttnBackend
@@ -101,6 +102,7 @@ class GraphRunner:
         )
         pool = None
         for bs in pbar:
+            gdebug.set_phase("capture", batch_size=bs, token_step=0)
             free_memory = get_free_memory(self.device)
             pbar.desc = f"Capturing graphs: bs = {bs:<3} | avail_mem = {mem_GB(free_memory)}"
             pbar.refresh()
@@ -125,8 +127,10 @@ class GraphRunner:
     def replay(self, batch: Batch) -> torch.Tensor:
         assert self.can_use_cuda_graph(batch)
         g = self.graph_map[batch.padded_size]
+        gdebug.set_phase("replay", batch_size=batch.padded_size, token_step=batch.reqs[0].device_len)
         self.attn_backend.prepare_for_replay(batch)
         g.replay()
+        gdebug.flush()
         return self.logits[: batch.size]
 
     def pad_batch(self, batch: Batch) -> int:
