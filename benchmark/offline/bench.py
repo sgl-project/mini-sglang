@@ -2,7 +2,6 @@
 
 import time
 from random import randint, seed
-from transformers import AutoTokenizer
 
 from minisgl.core import SamplingParams
 from minisgl.llm import LLM
@@ -13,16 +12,14 @@ def main():
     num_seqs = 256
     max_input_len = 1024
     max_ouput_len = 1024
-    model = "Qwen/Qwen3-0.6B"
 
     # align the hyperparameters
-    tokenizer = AutoTokenizer.from_pretrained(model)
     llm = LLM(
-        model, max_seq_len_override=4096, max_extend_tokens=16384, cuda_graph_max_bs=256
+        "Qwen/Qwen3-0.6B", max_seq_len_override=4096, max_extend_tokens=16384, cuda_graph_max_bs=256
     )
 
     prompt_token_ids = [
-        [randint(0, tokenizer.vocab_size - 1) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)
+        [randint(0, 10000) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)
     ]
     sampling_params = [
         SamplingParams(temperature=0.6, ignore_eos=True, max_tokens=randint(100, max_ouput_len))
