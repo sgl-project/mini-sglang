@@ -33,6 +33,8 @@ def create_page_table(shape: Tuple[int, int], device: torch.device) -> torch.Ten
 def _align_up_32(num: int) -> int:
     return (num + 31) // 32 * 32
 
+def _align_down_32(num: int) -> int:
+    return num // 32 * 32
 
 class Engine:
     def __init__(self, config: EngineConfig):
@@ -62,7 +64,13 @@ class Engine:
             dtype=self.dtype,
         )
         # NOTE: make page table 128 aligned (32 * sizeof(int32) == 128 bytes)
-        self.max_seq_len = _align_up_32(min(config.max_seq_len, self.num_pages))
+        logical_max_seq_len = min(config.max_seq_len, self.num_pages)
+        assert logical_max_seq_len > 1
+        if logical_max_seq_len < 32:
+            self.max_seq_len = logical_max_seq_len
+        else:
+            self.max_seq_len = _align_down_32(logical_max_seq_len)
+
         self.page_table = create_page_table(  # + 1 for dummy request
             (config.max_running_req + 1, self.max_seq_len),
             device=self.device,
