@@ -38,7 +38,6 @@ class DumpConfig:
 
     enabled: bool = False
     dump_dir: Path = Path("./dump/graph_debug")
-    debug_points: List[str] = field(default_factory=list)
     debug_layers: List[int] = field(default_factory=list)
     max_buffers: int = 50  # Maximum number of buffers to pre-allocate
 
