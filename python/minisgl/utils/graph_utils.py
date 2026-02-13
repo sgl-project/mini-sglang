@@ -47,9 +47,22 @@ class DumpConfig:
         dump_dir = Path(os.environ.get("SGLANG_GRAPH_DEBUG_DIR", "./dump/graph_debug"))
 
         layers_str = os.environ.get("SGLANG_GRAPH_DEBUG_LAYERS", "")
-        debug_layers = [int(l.strip()) for l in layers_str.split(",") if l.strip()]
+        try:
+            debug_layers = [int(l.strip()) for l in layers_str.split(",") if l.strip()]
+        except ValueError as exc:
+            raise ValueError(
+                "Invalid value for environment variable SGLANG_GRAPH_DEBUG_LAYERS: "
+                f"{layers_str!r}. Expected a comma-separated list of integers, e.g. '0,1,2'."
+            ) from exc
 
-        max_buffers = int(os.environ.get("SGLANG_GRAPH_DEBUG_MAX_BUFFERS", "50"))
+        max_buffers_str = os.environ.get("SGLANG_GRAPH_DEBUG_MAX_BUFFERS", "50")
+        try:
+            max_buffers = int(max_buffers_str)
+        except ValueError as exc:
+            raise ValueError(
+                "Invalid value for environment variable SGLANG_GRAPH_DEBUG_MAX_BUFFERS: "
+                f"{max_buffers_str!r}. Expected an integer, e.g. '50'."
+            ) from exc
 
         return cls(
             enabled=enabled,
