@@ -17,8 +17,8 @@ Usage:
     2. Insert dump points in model code:
         from minisgl.utils.graph_utils import gdebug
 
-        # In model forward pass
-        gdebug.capture_tensor("rope_q", q, layer_id=self.layer_id)
+        # In model forward pass (use an appropriate layer_id for your model)
+        gdebug.capture_tensor("rope_q", q, layer_id=0)
 """
 
 from __future__ import annotations
