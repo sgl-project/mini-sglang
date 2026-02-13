@@ -290,7 +290,7 @@ class GraphDebugger:
 
             try:
                 tensor_cpu = buffer.detach().clone().cpu()
-            except Exception as e:
+            except RuntimeError as e:
                 self._log(f"Warning: Cannot save {name}: {e}")
                 continue
 
