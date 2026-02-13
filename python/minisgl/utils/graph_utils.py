@@ -360,7 +360,6 @@ class GraphDebugger:
             extra_info: Reserved for future use (e.g., custom metadata)
         """
         # extra_info is reserved for future extensions
-        del extra_info
         if not condition or not self.config.enabled:
             return
 
