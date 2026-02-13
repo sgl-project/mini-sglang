@@ -215,7 +215,23 @@ class GraphDebugger:
                 )
 
             # Execute copy - this operation will be recorded into CUDA Graph!
-            buffer, _, _ = buffers[full_name]
+            buffer, saved_shape, saved_dtype = buffers[full_name]
+            current_shape = list(tensor.shape)
+            if current_shape != saved_shape:
+                raise RuntimeError(
+                    "GraphDebugger.capture_tensor: Shape mismatch for tensor "
+                    f"'{full_name}' during capture. Original shape={saved_shape}, "
+                    f"new shape={current_shape}. This indicates that the tensor's "
+                    "shape changed between captures for the same name, which is not "
+                    "supported for CUDA graph debugging."
+                )
+            if tensor.dtype != saved_dtype:
+                raise RuntimeError(
+                    "GraphDebugger.capture_tensor: Dtype mismatch for tensor "
+                    f"'{full_name}' during capture. Original dtype={saved_dtype}, "
+                    f"new dtype={tensor.dtype}. Changing dtypes for the same tensor "
+                    "name between captures is not supported for CUDA graph debugging."
+                )
             buffer.copy_(tensor)
 
         elif self.phase == "replay":
