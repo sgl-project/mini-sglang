@@ -105,12 +105,7 @@ class Scheduler(SchedulerIOMixin):
         # free resources for finished but not ongoing reqs
         ongoing_reqs = ongoing_data[0].batch.reqs if ongoing_data else []
         for req in self.finished_reqs.difference(ongoing_reqs):
-            self.table_manager.free(req.table_idx)
-            self.cache_manager.free_and_cache_finished_req(
-                req.cache_handle,
-                req.input_ids[: req.cached_len],
-                self.page_table[req.table_idx, : req.cached_len],
-            )
+            self._free_req_resources(req)
 
         # keep only ongoing reqs in the finished set
         self.finished_reqs.intersection_update(ongoing_reqs)
@@ -143,37 +138,27 @@ class Scheduler(SchedulerIOMixin):
             logger.error(f"Unknown message type: {type(msg)}")
             raise NotImplementedError
 
+    def _free_req_resources(self, req: Req) -> None:
+        self.table_manager.free(req.table_idx)
+        self.cache_manager.free_and_cache_finished_req(
+            req.cache_handle,
+            req.input_ids[: req.cached_len],
+            self.page_table[req.table_idx, : req.cached_len],
+        )
+
     def abort_req(self, uid: int) -> None:
         logger.info_rank0(f"Aborting request {uid}")
 
         # try to abort from prefill first
-        # if the request is in the pending list or being prefilled (ChunkedReq), remove it and free resources
+        # if the request is in the pending list or being prefilled, remove it and free resources
         if req_to_free := self.prefill_manager.abort_req(uid):
-            if isinstance(req_to_free, ChunkedReq):
-                self.table_manager.free(req_to_free.table_idx)
-
-                valid_tokens = req_to_free.input_ids[: req_to_free.cached_len]
-                valid_indices = self.page_table[req_to_free.table_idx, : req_to_free.cached_len]
-                self.cache_manager.free_and_cache_finished_req(
-                    req_to_free.cache_handle,
-                    valid_tokens,
-                    valid_indices,
-                )
+            self._free_req_resources(req_to_free)
             return
 
         # try to abort from decode
         if req_to_free := self.decode_manager.abort_req(uid):
             self.finished_reqs.discard(req_to_free)
-            self.table_manager.free(req_to_free.table_idx)
-
-            valid_tokens = req_to_free.host_ids[: req_to_free.cached_len]
-            valid_indices = self.page_table[req_to_free.table_idx, : req_to_free.cached_len]
-
-            self.cache_manager.free_and_cache_finished_req(
-                req_to_free.cache_handle,
-                valid_tokens,
-                valid_indices,
-            )
+            self._free_req_resources(req_to_free)
             return
 
     def _prepare_batch(self, batch: Batch) -> ForwardInput:

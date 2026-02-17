@@ -40,21 +40,6 @@ def get_global_state() -> FrontendManager:
     return _GLOBAL_STATE
 
 
-async def stream_with_cancellation(generator, request: Request, uid: int, state: FrontendManager):
-    try:
-        async for chunk in generator:
-            # detect if the client has disconnected
-            if await request.is_disconnected():
-                logger.info(f"Client disconnected for user {uid}")
-                raise asyncio.CancelledError
-            yield chunk
-    except asyncio.CancelledError:
-        logger.info(f"Request cancelled for user {uid}")
-        raise
-    finally:
-        asyncio.create_task(state.abort_user(uid))
-
-
 def _unwrap_msg(msg: BaseFrontendMsg) -> List[UserReply]:
     if isinstance(msg, BatchFrontendMsg):
         result = []
@@ -203,6 +188,20 @@ class FrontendManager:
         yield b"data: [DONE]\n\n"
         logger.debug("Finished streaming response for user %s", uid)
 
+    async def stream_with_cancellation(self, generator, request: Request, uid: int):
+        try:
+            async for chunk in generator:
+                # detect if the client has disconnected
+                if await request.is_disconnected():
+                    logger.info("Client disconnected for user %s", uid)
+                    raise asyncio.CancelledError
+                yield chunk
+        except asyncio.CancelledError:
+            logger.info("Request cancelled for user %s", uid)
+            raise
+        finally:
+            asyncio.create_task(self.abort_user(uid))
+
     async def abort_user(self, uid: int):
         await asyncio.sleep(0.1)
         if uid in self.ack_map:
@@ -246,7 +245,7 @@ async def generate(req: GenerateRequest, request: Request):
     )
 
     return StreamingResponse(
-        stream_with_cancellation(state.stream_generate(uid), request, uid, state),
+        state.stream_with_cancellation(state.stream_generate(uid), request, uid),
         media_type="text/event-stream",
     )
 
@@ -282,7 +281,7 @@ async def v1_completions(req: OpenAICompletionRequest, request: Request):
     )
 
     return StreamingResponse(
-        stream_with_cancellation(state.stream_generate(uid), request, uid, state),
+        state.stream_with_cancellation(state.stream_chat_completions(uid), request, uid),
         media_type="text/event-stream",
     )
 
