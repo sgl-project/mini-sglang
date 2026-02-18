@@ -14,8 +14,8 @@ from minisgl.message import (
     ExitMsg,
     UserMsg,
 )
+from minisgl.tokenizer import load_tokenizer
 from minisgl.utils import init_logger
-from transformers import AutoTokenizer
 
 from .cache import CacheManager
 from .config import SchedulerConfig
@@ -69,13 +69,7 @@ class Scheduler(SchedulerIOMixin):
         # some alias for easy access
         self.tp_info = config.tp_info
         self.finished_reqs: Set[Req] = set()
-        if config.model_source == "modelscope":
-            from modelscope import snapshot_download
-
-            tokenizer_path = snapshot_download(config.model_path)
-        else:
-            tokenizer_path = config.model_path
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        self.tokenizer = load_tokenizer(config.model_path, model_source=config.model_source)
         self.eos_token_id = self.tokenizer.eos_token_id
         self.page_table = self.engine.page_table
         self.token_pool = self.table_manager.token_pool

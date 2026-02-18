@@ -18,8 +18,8 @@ from minisgl.message import (
     UserMsg,
     UserReply,
 )
+from minisgl.tokenizer._loader import load_tokenizer
 from minisgl.utils import ZmqPullQueue, ZmqPushQueue, init_logger
-from transformers import AutoTokenizer, LlamaTokenizer
 
 
 def _unwrap_msg(msg: BaseTokenizerMsg) -> List[BaseTokenizerMsg]:
@@ -45,11 +45,7 @@ def tokenize_worker(
     send_frontend = ZmqPushQueue(frontend_addr, create=False, encoder=BaseFrontendMsg.encoder)
     recv_listener = ZmqPullQueue(addr, create=create, decoder=BatchTokenizerMsg.decoder)
     assert local_bs > 0
-    if model_source == "modelscope":
-        from modelscope import snapshot_download
-
-        tokenizer_path = snapshot_download(tokenizer_path)
-    tokenizer: LlamaTokenizer = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
+    tokenizer = load_tokenizer(tokenizer_path, model_source=model_source, use_fast=True)
     logger = init_logger(__name__, f"tokenizer_{tokenizer_id}")
 
     from .detokenize import DetokenizeManager
