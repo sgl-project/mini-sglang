@@ -69,6 +69,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
 
     parser.add_argument(
         "--model-path",
+        "--model",
         type=str,
         required=True,
         help="The path of the model weights. This can be a local folder or a Hugging Face repo ID.",
