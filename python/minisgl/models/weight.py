@@ -121,12 +121,3 @@ def load_weight(
 
     state_dict = {k: v.to(device) for k, v in state_dict.items()}
     return _merge_state_dict(state_dict)
-
-
-# Backward compatibility
-def load_hf_weight(model_path: str, device: torch.device) -> Dict[str, torch.Tensor]:
-    return load_weight(model_path, device, source="huggingface")
-
-
-def load_ms_weight(model_path: str, device: torch.device) -> Dict[str, torch.Tensor]:
-    return load_weight(model_path, device, source="modelscope")
