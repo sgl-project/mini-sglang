@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List, Tuple
 
 import torch
 from minisgl.core import Batch, Req
+from minisgl.env import ENV
 from minisgl.utils import init_logger
 
 from .utils import PendingReq
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from .table import TableManager
 
 logger = init_logger(__name__)
+_CACHE_AWARE_PREFILL_ORDERING_MAX_QUEUE = 128
 
 
 class ChunkedReq(Req):
@@ -122,6 +124,28 @@ class PrefillManager:
     def add_one_req(self, req: UserMsg) -> None:
         self.pending_list.append(PendingReq(req.uid, req.input_ids, req.sampling_params))
 
+    def _order_pending_list(self) -> None:
+        pending = self.pending_list
+        if not ENV.ENABLE_CACHE_AWARE_PREFILL_ORDERING:
+            return
+        # Turn off the expensive prefix matching and sorting when the #queue is large.
+        if len(pending) > _CACHE_AWARE_PREFILL_ORDERING_MAX_QUEUE:
+            return
+
+        # Keep chunked requests ahead
+        chunked = [req for req in pending if req.chunked_req is not None]
+        normal = [req for req in pending if req.chunked_req is None]
+        if len(normal) <= 1:
+            pending[:] = chunked + normal
+            return
+
+        def _cached_len(req: PendingReq) -> int:
+            handle, _ = self.cache_manager.match_req(req)
+            return handle.cached_len
+
+        normal.sort(key=lambda req: -_cached_len(req))
+        pending[:] = chunked + normal
+
     def schedule_next_batch(self, prefill_budget: int) -> Batch | None:
         if len(self.pending_list) == 0:
             return None
@@ -133,6 +157,7 @@ class PrefillManager:
             cache_manager=self.cache_manager,
             table_manager=self.table_manager,
         )
+        self._order_pending_list()
         reqs: List[Req] = []
         chunked_list: List[PendingReq] = []
         for pending_req in self.pending_list:
