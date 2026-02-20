@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import torch
-from minisgl.core import get_global_ctx
 from minisgl.distributed import get_tp_info
 from minisgl.utils import div_even
 
@@ -20,11 +19,11 @@ class MHAKVCache(BaseKVCache):
         num_layers: int,
         head_dim: int,
         num_pages: int,
+        page_size: int,
         dtype: torch.dtype,
         device: torch.device,
     ) -> None:
         tp_info = get_tp_info()
-        page_size = get_global_ctx().page_size
         local_kv_heads = div_even(num_kv_heads, tp_info.size)
         self._kv_buffer = torch.empty(
             (2, num_layers, num_pages, page_size, local_kv_heads, head_dim),

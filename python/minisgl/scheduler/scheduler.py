@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, NamedTuple, NoReturn, Set, Tuple, TypeAlias
 
 import torch
-import torch.nn.functional as F
 from minisgl.core import Batch, Req
 from minisgl.env import ENV
 from minisgl.message import (
@@ -59,8 +58,10 @@ class Scheduler(SchedulerIOMixin):
 
         # initialize other managers
         self.table_manager = TableManager(config.max_running_req, self.engine.page_table)
-        self.cache_manager = CacheManager(self.device, self.engine.num_pages, config.cache_type)
-        self.decode_manager = DecodeManager()
+        self.cache_manager = CacheManager(
+            self.device, self.engine.num_pages, config.page_size, config.cache_type
+        )
+        self.decode_manager = DecodeManager(config.page_size)
         self.prefill_manager = PrefillManager(
             self.cache_manager, self.table_manager, self.decode_manager
         )
@@ -83,23 +84,23 @@ class Scheduler(SchedulerIOMixin):
         copy_done.synchronize()
         reply: List[DetokenizeMsg] = []
         new_finished_reqs: Set[Req] = set()
-        for i, req in enumerate(batch.reqs):
-            if isinstance(req, ChunkedReq):
-                continue
+        with self.cache_manager.lazy_free_region():
+            for i, req in enumerate(batch.reqs):
+                if isinstance(req, ChunkedReq):
+                    continue
+                next_token = next_tokens_cpu[i]
+                req.append_host(next_token.unsqueeze(0))
+                next_token = int(next_token.item())
+                finished = not req.can_decode
+                if not req.sampling_params.ignore_eos:
+                    finished |= next_token == self.eos_token_id
+                reply.append(DetokenizeMsg(uid=req.uid, next_token=next_token, finished=finished))
 
-            next_token = next_tokens_cpu[i]
-            req.append_host(next_token.unsqueeze(0))
-            next_token = int(next_token.item())
-            finished = not req.can_decode
-            if not req.sampling_params.ignore_eos:
-                finished |= next_token == self.eos_token_id
-            reply.append(DetokenizeMsg(uid=req.uid, next_token=next_token, finished=finished))
-
-            # NOTE: overlap scheduling may make the request freed twice, skip second free
-            if finished and req not in self.finished_reqs:
-                self.decode_manager.remove_req(req)
-                self._free_req_resources(req)
-                new_finished_reqs.add(req)
+                # NOTE: overlap scheduling may make the request freed twice, skip second free
+                if finished and req not in self.finished_reqs:
+                    self.decode_manager.remove_req(req)
+                    self._free_req_resources(req)
+                    new_finished_reqs.add(req)
         self.finished_reqs = new_finished_reqs
         self.send_result(reply)
 
@@ -136,27 +137,15 @@ class Scheduler(SchedulerIOMixin):
 
     def _free_req_resources(self, req: Req) -> None:
         self.table_manager.free(req.table_idx)
-        self.cache_manager.free_and_cache_finished_req(
-            req.cache_handle,
-            req.input_ids[: req.cached_len],
-            self.page_table[req.table_idx, : req.cached_len],
-        )
+        self.cache_manager.free_and_cache_finished_req(req, self.page_table)
 
     def _prepare_batch(self, batch: Batch) -> ForwardInput:
         self.engine.graph_runner.pad_batch(batch)
+        self.cache_manager.allocate_paged(batch.reqs, self.page_table)
         batch.positions = _make_positions(batch, self.device)
         input_mapping = _make_input_tuple(batch, self.device)
         write_mapping = _make_write_tuple(batch, self.device)
-
-        # allocate pages
-        padding_size = batch.padded_size - batch.size
-        needed_tokens = len(batch.positions) - padding_size  # unpadded tokens
-        out_loc = self.cache_manager.allocate(needed_tokens)
-        if padding_size > 0:
-            out_loc = F.pad(out_loc, (0, padding_size), value=self.engine.dummy_loc)
-        self.page_table[input_mapping] = out_loc
-        batch.out_loc = out_loc
-
+        batch.out_loc = self.page_table[input_mapping]
         self.engine.attn_backend.prepare_metadata(batch)
         return ForwardInput(
             batch=batch,

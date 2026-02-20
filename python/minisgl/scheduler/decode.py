@@ -8,6 +8,7 @@ from minisgl.core import Batch, Req
 
 @dataclass
 class DecodeManager:
+    page_size: int
     running_reqs: Set[Req] = field(default_factory=set)
 
     def filter_reqs(self, reqs: Iterable[Req]) -> None:
@@ -25,7 +26,8 @@ class DecodeManager:
 
     @property
     def inflight_tokens(self) -> int:
-        return sum(req.remain_len for req in self.running_reqs)
+        tokens_reserved = (self.page_size - 1) * len(self.running_reqs)  # 1 page reserved
+        return sum(req.remain_len for req in self.running_reqs) + tokens_reserved
 
     def schedule_next_batch(self) -> Batch | None:
         if not self.runnable:

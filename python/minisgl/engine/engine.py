@@ -54,17 +54,18 @@ class Engine:
 
         # ======================= KV cache initialization ========================
         self.num_pages = self._determine_num_pages(init_free_memory, config)
-        self.dummy_loc = self.num_pages * config.page_size
+        num_tokens = self.num_pages * config.page_size
         self.kv_cache = create_kvcache(
             model_config=config.model_config,
             num_pages=self.num_pages + 1,  # +1 for dummy page
+            page_size=config.page_size,
             device=self.device,
             dtype=self.dtype,
         )
 
         # ======================= Page table initialization ========================
         # NOTE: 1. aligned to 128 bytes; 2. store raw locations instead of pages
-        self.max_seq_len = min(config.max_seq_len, self.dummy_loc)
+        self.max_seq_len = min(config.max_seq_len, num_tokens)
         aligned_max_seq_len = _align_up_32(self.max_seq_len)
         self.ctx.page_table = self.page_table = torch.zeros(  # + 1 for dummy request
             (config.max_running_req + 1, aligned_max_seq_len),
@@ -97,7 +98,7 @@ class Engine:
             sampling_params=None,  # type: ignore
             cache_handle=None,  # type: ignore
         )
-        self.page_table[self.dummy_req.table_idx].fill_(self.dummy_loc)
+        self.page_table[self.dummy_req.table_idx].fill_(num_tokens)  # point to dummy page
         self.graph_runner = GraphRunner(
             stream=self.stream,
             device=self.device,
