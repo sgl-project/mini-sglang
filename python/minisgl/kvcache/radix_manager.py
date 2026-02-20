@@ -157,11 +157,10 @@ class RadixCacheManager(BaseCacheManager):
         tic = time.monotonic_ns()
 
         while prefix_len < indice_len:
-            this_id = self.key_fn(input_ids[prefix_len:])
-            if this_id not in node.children:
+            child_node = node.children.get(self.key_fn(input_ids[prefix_len:]))
+            if child_node is None:
                 return node, prefix_len
-
-            node = node.children[this_id]
+            node = child_node  # walk to child node
 
             # NOTE: at least 1 page is matched, so match_len >= page_size
             match_len = node.get_match_len(input_ids[prefix_len:])
