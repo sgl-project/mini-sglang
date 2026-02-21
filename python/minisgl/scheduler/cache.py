@@ -90,8 +90,8 @@ class CacheManager:
 
     def _allocate(self, needed_pages: int) -> torch.Tensor:
         if needed_pages > (free_pages := len(self._free_slots)):
-            evicted = self.manager.evict(needed_pages - free_pages)
-            self._free_slots = torch.cat([self._free_slots, evicted])
+            evicted = self.manager.evict((needed_pages - free_pages) * self.page_size)
+            self._free_slots = torch.cat([self._free_slots, evicted[:: self.page_size]])
             assert len(self._free_slots) >= needed_pages, "Eviction did not free enough space."
         allocated = self._free_slots[:needed_pages]
         self._free_slots = self._free_slots[needed_pages:]
