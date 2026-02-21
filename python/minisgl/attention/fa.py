@@ -41,6 +41,7 @@ class FlashAttentionBackend(BaseAttnBackend):
         self.max_graph_bs = 0
         self.capture_bs: List[int] = []
         self.scale = config.head_dim**-0.5
+        self.page_size = get_global_ctx().page_size
 
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, layer_id: int, batch: Batch
@@ -55,7 +56,7 @@ class FlashAttentionBackend(BaseAttnBackend):
             page_table=metadata.page_table,
             cache_seqlens=metadata.cache_seqlens,
             cu_seqlens_q=metadata.cu_seqlens_q,
-            cu_seqlens_k_new=metadata.cu_seqlens_k,
+            cu_seqlens_k=metadata.cu_seqlens_k,
             max_seqlen_q=metadata.max_seqlen_q,
             softmax_scale=self.scale,
         )
@@ -69,12 +70,12 @@ class FlashAttentionBackend(BaseAttnBackend):
         cached_lens = [req.cached_len for req in reqs]
         max_seqlen_k = max(seqlens_k)
         max_seqlen_q = max(seqlens_q)
-        cpu_kwargs = {"device": "cpu", "dtype": torch.int32, "pin_memory": True}
+        CPU_KWARGS = {"device": "cpu", "dtype": torch.int32, "pin_memory": True}
 
         device = self.kvcache.device
-        cache_seqlens = torch.tensor(seqlens_k, **cpu_kwargs)
+        cache_seqlens = torch.tensor(seqlens_k, **CPU_KWARGS)
         cache_seqlens = cache_seqlens.to(device, non_blocking=True)
-        cu_seqlens_k = torch.tensor([0] + seqlens_k, **cpu_kwargs).cumsum_(dim=0)
+        cu_seqlens_k = torch.tensor([0] + seqlens_k, **CPU_KWARGS).cumsum_(dim=0)
         cu_seqlens_k = cu_seqlens_k.to(device, non_blocking=True)
 
         if max_seqlen_q == 1:
@@ -82,13 +83,15 @@ class FlashAttentionBackend(BaseAttnBackend):
         elif all(l == 0 for l in cached_lens):  # prefill with no cache hit
             cu_seqlens_q = cu_seqlens_k
         else:  # normal extend prefill, with partial cache hit
-            cu_seqlens_q = torch.tensor([0] + seqlens_q, **cpu_kwargs).cumsum_(dim=0)
+            cu_seqlens_q = torch.tensor([0] + seqlens_q, **CPU_KWARGS).cumsum_(dim=0)
             cu_seqlens_q = cu_seqlens_q.to(self.kvcache.device, non_blocking=True)
 
         page_table = get_global_ctx().page_table
-        new_page_table = torch.stack([page_table[req.table_idx, :max_seqlen_k] for req in reqs])
-
-        # copy from CPU to GPU
+        new_page_table = torch.stack(  # NOTE: global page table treat page_size = 1, we need slice
+            [page_table[req.table_idx, : max_seqlen_k : self.page_size] for req in reqs]
+        )
+        if self.page_size > 1:
+            new_page_table.div_(self.page_size, rounding_mode="floor")
         batch.attn_metadata = FAMetadata(
             cu_seqlens_k=cu_seqlens_k,
             cu_seqlens_q=cu_seqlens_q,
@@ -101,7 +104,7 @@ class FlashAttentionBackend(BaseAttnBackend):
     def init_capture_graph(self, max_seq_len: int, bs_list: List[int]) -> None:
         assert self.capture is None, "Capture already initialized."
         max_bs = max(bs_list)
-        capture = FACaptureData.create(max_bs, max_seq_len, self.kvcache.device)
+        capture = FACaptureData.create(max_bs, max_seq_len // self.page_size, self.kvcache.device)
         self.max_graph_bs = max_bs
         self.capture = capture
         self.capture_bs = sorted(bs_list)
@@ -113,7 +116,7 @@ class FlashAttentionBackend(BaseAttnBackend):
             cu_seqlens_k=capture.cu_seqlens_k[: bs + 1],
             cu_seqlens_q=capture.cu_seqlens_q[: bs + 1],
             cache_seqlens=capture.seq_lens[:bs],
-            max_seqlen_k=capture.page_table.size(1),
+            max_seqlen_k=capture.page_table.size(1) * self.page_size,
             max_seqlen_q=1,  # decode only
             page_table=capture.page_table[:bs, :],
         )
@@ -124,9 +127,10 @@ class FlashAttentionBackend(BaseAttnBackend):
         assert isinstance(metadata, FAMetadata)
         assert self.capture is not None and bs in self.capture_bs
         # cu_seqlens_q is always [0, 1, 2, ..., bs] for decode (i.e. no-op)
+        table_len = metadata.page_table.size(1)
         self.capture.cu_seqlens_k[: bs + 1].copy_(metadata.cu_seqlens_k)
         self.capture.seq_lens[:bs].copy_(metadata.cache_seqlens)
-        self.capture.page_table[:bs, : metadata.max_seqlen_k].copy_(metadata.page_table)
+        self.capture.page_table[:bs, :table_len].copy_(metadata.page_table)
 
 
 def _fa_sgl_impl(
@@ -136,7 +140,7 @@ def _fa_sgl_impl(
     page_table: torch.Tensor,
     cache_seqlens: torch.Tensor,
     cu_seqlens_q: torch.Tensor,
-    cu_seqlens_k_new: torch.Tensor,
+    cu_seqlens_k: torch.Tensor,
     max_seqlen_q: int,
     softmax_scale: float,
     sm_margin: int = 0,
@@ -161,7 +165,7 @@ def _fa_sgl_impl(
         page_table=page_table,
         cache_seqlens=cache_seqlens,
         cu_seqlens_q=cu_seqlens_q,
-        cu_seqlens_k_new=cu_seqlens_k_new,
+        cu_seqlens_k_new=cu_seqlens_k,
         max_seqlen_q=max_seqlen_q,
         softmax_scale=softmax_scale,
         sm_margin=sm_margin,

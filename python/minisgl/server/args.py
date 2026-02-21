@@ -179,6 +179,13 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     )
 
     parser.add_argument(
+        "--page-size",
+        type=int,
+        default=ServerArgs.page_size,
+        help="Set the page size for system management.",
+    )
+
+    parser.add_argument(
         "--attention-backend",
         "--attn",
         type=validate_attn_backend,

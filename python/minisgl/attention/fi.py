@@ -172,11 +172,15 @@ class FlashInferBackend(BaseAttnBackend):
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, layer_id: int, batch: Batch
     ) -> torch.Tensor:
+        def _flatten_cache(cache: torch.Tensor) -> torch.Tensor:  # treat page = 1
+            return cache.view(-1, 1, cache.shape[2], cache.shape[3])
+
         metadata = batch.attn_metadata
         assert isinstance(metadata, FIMetadata)
         self._initialize_metadata_once(metadata)
         self.kvcache.store_kv(k, v, batch.out_loc, layer_id)
         kv_cache = (self.kvcache.k_cache(layer_id), self.kvcache.v_cache(layer_id))
+        kv_cache = (_flatten_cache(kv_cache[0]), _flatten_cache(kv_cache[1]))
         return metadata.wrapper.run(q=q, paged_kv_cache=kv_cache)
 
     def prepare_metadata(self, batch: Batch) -> None:
@@ -187,17 +191,17 @@ class FlashInferBackend(BaseAttnBackend):
         seqlens_k = [req.device_len for req in reqs]
         cached_lens = [req.cached_len for req in reqs]
         max_seqlen_q = max(seqlens_q)
-        cpu_kwargs = {"device": "cpu", "dtype": torch.int32, "pin_memory": True}
+        CPU_KWARGS = {"device": "cpu", "dtype": torch.int32, "pin_memory": True}
 
         device = self.device
-        seq_len_cpu = torch.tensor(seqlens_k, **cpu_kwargs)
-        cu_seqlens_k_cpu = torch.tensor([0] + seqlens_k, **cpu_kwargs).cumsum_(dim=0)
+        seq_len_cpu = torch.tensor(seqlens_k, **CPU_KWARGS)
+        cu_seqlens_k_cpu = torch.tensor([0] + seqlens_k, **CPU_KWARGS).cumsum_(dim=0)
         if max_seqlen_q == 1:  # decode with all extend_len = 1
-            cu_seqlens_q_cpu = torch.arange(0, padded_size + 1, **cpu_kwargs)
+            cu_seqlens_q_cpu = torch.arange(0, padded_size + 1, **CPU_KWARGS)
         elif all(l == 0 for l in cached_lens):  # prefill with no cache hit
             cu_seqlens_q_cpu = cu_seqlens_k_cpu
         else:  # normal extend prefill, with partial cache hit
-            cu_seqlens_q_cpu = torch.tensor([0] + seqlens_q, **cpu_kwargs).cumsum_(dim=0)
+            cu_seqlens_q_cpu = torch.tensor([0] + seqlens_q, **CPU_KWARGS).cumsum_(dim=0)
 
         page_table = get_global_ctx().page_table
         batch.attn_metadata = FIMetadata(
