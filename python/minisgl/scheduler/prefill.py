@@ -120,24 +120,29 @@ class PrefillManager:
     table_manager: TableManager
     decode_manager: DecodeManager
     pending_list: List[PendingReq] = field(default_factory=list)
+    # FIXME: remove TEMP BENCH METRICS
+    total_admitted_cached_len: int = 0
+    total_admitted_reqs: int = 0
+    fallback_rounds: int = 0
+    total_prefill_rounds: int = 0
 
     def add_one_req(self, req: UserMsg) -> None:
         self.pending_list.append(PendingReq(req.uid, req.input_ids, req.sampling_params))
 
-    def _order_pending_list(self) -> None:
+    def _order_pending_list(self) -> bool:
         pending = self.pending_list
         if not ENV.ENABLE_CACHE_AWARE_PREFILL_ORDERING:
-            return
+            return False
         # Turn off the expensive prefix matching and sorting when the #queue is large.
         if len(pending) > _CACHE_AWARE_PREFILL_ORDERING_MAX_QUEUE:
-            return
+            return True
 
         # Keep chunked requests ahead
         chunked = [req for req in pending if req.chunked_req is not None]
         normal = [req for req in pending if req.chunked_req is None]
         if len(normal) <= 1:
             pending[:] = chunked + normal
-            return
+            return False
 
         def _cached_len(req: PendingReq) -> int:
             handle, _ = self.cache_manager.match_req(req)
@@ -145,11 +150,14 @@ class PrefillManager:
 
         normal.sort(key=lambda req: -_cached_len(req))
         pending[:] = chunked + normal
+        return False
 
     def schedule_next_batch(self, prefill_budget: int) -> Batch | None:
         if len(self.pending_list) == 0:
             return None
 
+        # TEMP BENCH METRICS
+        self.total_prefill_rounds += 1
         # estimated offset due to in-flight decode
         adder = PrefillAdder(
             token_budget=prefill_budget,
@@ -157,11 +165,17 @@ class PrefillManager:
             cache_manager=self.cache_manager,
             table_manager=self.table_manager,
         )
-        self._order_pending_list()
+        if self._order_pending_list():
+            # Cache-aware ordering is enabled but bypassed due to queue threshold.
+            self.fallback_rounds += 1
         reqs: List[Req] = []
         chunked_list: List[PendingReq] = []
         for pending_req in self.pending_list:
             if req := adder.try_add_one(pending_req):
+                if not isinstance(req, ChunkedReq):
+                    # TEMP BENCH METRICS: admitted cache-hit quality
+                    self.total_admitted_cached_len += req.cached_len
+                    self.total_admitted_reqs += 1
                 pending_req.chunked_req = None
                 if isinstance(req, ChunkedReq):
                     pending_req.chunked_req = req
@@ -184,3 +198,16 @@ class PrefillManager:
     @property
     def runnable(self) -> bool:
         return len(self.pending_list) > 0
+
+    def get_temp_bench_metrics(self) -> Tuple[float, float]:
+        avg_cached_len = (
+            self.total_admitted_cached_len / self.total_admitted_reqs
+            if self.total_admitted_reqs > 0
+            else 0.0
+        )
+        fallback_ratio = (
+            self.fallback_rounds / self.total_prefill_rounds
+            if self.total_prefill_rounds > 0
+            else 0.0
+        )
+        return avg_cached_len, fallback_ratio

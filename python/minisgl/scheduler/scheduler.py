@@ -241,6 +241,13 @@ class Scheduler(SchedulerIOMixin):
     def shutdown(self) -> None:
         torch.cuda.synchronize(self.device)
         self.sync_all_ranks()
+        avg_cached_len, fallback_ratio = self.prefill_manager.get_temp_bench_metrics()
+        logger.info_rank0(
+            " avg_cached_len_admitted_prefill=%.4f |"
+            " prefill_fallback_round_ratio=%.4f",
+            avg_cached_len,
+            fallback_ratio,
+        )
         self.engine.shutdown()
 
 

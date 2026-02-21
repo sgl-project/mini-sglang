@@ -5,7 +5,7 @@ import random
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple, overload
+from typing import Any, Dict, List, Literal, Tuple, overload
 
 from minisgl.utils import UNSET, Unset, init_logger
 from openai import AsyncOpenAI as OpenAI
@@ -408,7 +408,7 @@ def read_qwen_trace(
     file_path: str,
     tokenizer: Any,
     n: int | None = None,
-    dummy: bool = False,
+    mode: Literal["random", "global_prefix", "clustered_prefix"] = "random",
 ) -> List[BenchmarkTrace]:
     class JSONInput(BaseModel):
         chat_id: int
@@ -425,20 +425,37 @@ def read_qwen_trace(
         if n is not None:
             lines = lines[:n]
     objs = [JSONInput.model_validate_json(line) for line in lines]
-    if dummy:
+    if mode == "global_prefix":
         prompt = generate_prompt(tokenizer, max(obj.input_length for obj in objs))
         ids = tokenizer.encode(prompt, add_special_tokens=False)
-        _get_prompt = lambda obj: tokenizer.decode(ids[: obj.input_length])
+        prompts = [tokenizer.decode(ids[: obj.input_length]) for obj in objs]
+    elif mode == "clustered_prefix":
+        num_clusters = min(len(objs), max(2, int(len(objs) ** 0.5)))
+        max_len = max(obj.input_length for obj in objs)
+        cluster_ids = []
+        for _ in range(num_clusters):
+            prompt = generate_prompt(tokenizer, max_len)
+            cluster_ids.append(tokenizer.encode(prompt, add_special_tokens=False))
+
+        assignments = [obj.chat_id % num_clusters for obj in objs]
+
+        random.Random(42).shuffle(assignments)
+        prompts = [
+            tokenizer.decode(cluster_ids[cluster_id][: obj.input_length])
+            for obj, cluster_id in zip(objs, assignments, strict=True)
+        ]
+    elif mode == "random":
+        prompts = [generate_prompt(tokenizer, obj.input_length) for obj in objs]
     else:
-        _get_prompt = lambda obj: generate_prompt(tokenizer, obj.input_length)
+        raise ValueError(f"Unsupported mode: {mode}")
     return [
         BenchmarkTrace(
             timestamp=obj.timestamp,
-            message=_get_prompt(obj),
+            message=prompt,
             input_length=obj.input_length,
             output_length=obj.output_length,
         )
-        for obj in objs
+        for obj, prompt in zip(objs, prompts, strict=True)
     ]
 
 
