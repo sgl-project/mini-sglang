@@ -227,7 +227,7 @@ def _adjust_config(config: EngineConfig):
         override("attention_backend", backend)
         logger.info_rank0(f"Auto-selected attention backend: {config.attention_backend}")
 
-    if config.attention_backend == "trtllm" and config.page_size not in [16, 32, 64]:
+    if "trtllm" in config.attention_backend and config.page_size not in [16, 32, 64]:
         override("page_size", 64)
         logger.warning_rank0("Page size is overridden to 64 for TRTLLM backend")
 
