@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, List, Tuple
 import torch
 from minisgl.core import Req
 from minisgl.kvcache import BaseCacheHandle, MatchResult, create_cache_manager
-from minisgl.utils import align_down, div_ceil
+from minisgl.utils import div_ceil
 
 if TYPE_CHECKING:
     from .utils import PendingReq
@@ -62,17 +62,16 @@ class CacheManager:
         # [cached_len, new_handle.cached_len)       This part is newly inserted into the prefix cache.
         # [new_handle.cached_len, req.cached_len)   This part is tailing part that can not inserted into the prefix cache.
         #                                           We should free it if the request has finished.
-        insert_len = align_down(req.cached_len, self.page_size)
-        insert_ids = req.input_ids[:insert_len]
-        table_entry = page_table[req.table_idx]
+        insert_ids = req.input_ids[: req.cached_len]
+        page_indices = page_table[req.table_idx, : req.cached_len]
         old_handle = req.cache_handle
-        cached_len, new_handle = self.manager.insert_prefix(insert_ids, table_entry[:insert_len])
+        cached_len, new_handle = self.manager.insert_prefix(insert_ids, page_indices)
         # unlock until all operations on handle is done
         self.unlock(old_handle)
         # this part is already in the prefix cache, free it
-        self._free(table_entry[old_handle.cached_len : cached_len])
+        self._free(page_indices[old_handle.cached_len : cached_len])
         if finished:  # this tail part should be freed
-            self._free(table_entry[new_handle.cached_len : req.cached_len])
+            self._free(page_indices[new_handle.cached_len :])
         else:  # keep the tail part, update the handle
             req.cache_handle = new_handle
             self.lock(new_handle)

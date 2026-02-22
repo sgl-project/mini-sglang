@@ -134,16 +134,16 @@ class RadixCacheManager(BaseCacheManager):
         return MatchResult(RadixCacheHandle(prefix_len, node))
 
     def insert_prefix(self, input_ids: torch.Tensor, indices: torch.Tensor) -> InsertResult:
-        input_len = len(input_ids)
+        insert_len = align_down(len(input_ids), self.page_size)
+        input_ids, indices = input_ids[:insert_len], indices[:insert_len]
         node, prefix_len = self._tree_walk(input_ids)
-        assert prefix_len <= input_len == len(indices) and input_len % self.page_size == 0
-        if prefix_len != input_len:
+        if prefix_len != insert_len:  # NOTE: prefix_len < insert_len
             new_node = RadixTreeNode(self.key_fn)
             new_node.set_key_value(input_ids[prefix_len:], indices[prefix_len:].clone())
             new_node.set_parent(node)
             self.evictable_size += new_node.length
             node = new_node
-        return InsertResult(prefix_len, RadixCacheHandle(input_len, node))
+        return InsertResult(prefix_len, RadixCacheHandle(insert_len, node))
 
     def evict(self, size: int) -> torch.Tensor:
         if size == 0:
