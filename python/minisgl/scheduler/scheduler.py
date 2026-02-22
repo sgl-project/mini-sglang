@@ -101,6 +101,9 @@ class Scheduler(SchedulerIOMixin):
                     self.decode_manager.remove_req(req)
                     self._free_req_resources(req)
                     new_finished_reqs.add(req)
+                elif batch.is_prefill:  # for prefill, non-chunk req, cache the prefix
+                    self.cache_manager.cache_req(req, self.page_table, finished=False)
+
         self.finished_reqs = new_finished_reqs
         self.send_result(reply)
 
@@ -137,7 +140,7 @@ class Scheduler(SchedulerIOMixin):
 
     def _free_req_resources(self, req: Req) -> None:
         self.table_manager.free(req.table_idx)
-        self.cache_manager.free_and_cache_finished_req(req, self.page_table)
+        self.cache_manager.cache_req(req, self.page_table, finished=True)
 
     def _prepare_batch(self, batch: Batch) -> ForwardInput:
         self.engine.graph_runner.pad_batch(batch)

@@ -12,6 +12,7 @@ from .base import (
     BaseCacheHandle,
     BaseCacheManager,
     BaseKVCache,
+    MatchResult,
     SizeInfo,
 )
 
@@ -68,5 +69,6 @@ __all__ = [
     "BaseCacheHandle",
     "BaseCacheManager",
     "SizeInfo",
+    "MatchResult",
     "SUPPORTED_CACHE_MANAGER",
 ]

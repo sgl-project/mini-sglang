@@ -9,7 +9,7 @@ import torch
 from minisgl.core import get_global_ctx
 from minisgl.utils import align_down
 
-from .base import BaseCacheHandle, BaseCacheManager, SizeInfo
+from .base import BaseCacheHandle, BaseCacheManager, InsertResult, MatchResult, SizeInfo
 
 KEY_FN: TypeAlias = Callable[[torch.Tensor], Any]
 
@@ -66,7 +66,7 @@ class RadixTreeNode:
         # compare key and input_ids, find the first diff
         return fast_compare_key(self._key, input_ids)
 
-    def _split_at(self, pos: int) -> RadixTreeNode:
+    def split_at(self, pos: int) -> RadixTreeNode:
         assert 0 < pos < self.length
         parent = self.parent
 
@@ -88,11 +88,14 @@ class RadixTreeNode:
 class RadixCacheHandle(BaseCacheHandle):
     node: RadixTreeNode
 
-
-def _get_key_fn(page_size: int) -> KEY_FN:
-    if page_size == 1:
-        return lambda x: x[0].item()
-    return lambda x: tuple(x[:page_size].tolist())
+    def get_matched_indices(self) -> torch.Tensor:
+        node = self.node
+        value_list: List[torch.Tensor] = []
+        while not node.is_root():
+            value_list.append(node.value)
+            node = node.parent
+        value_list.reverse()
+        return torch.cat(value_list)
 
 
 class RadixCacheManager(BaseCacheManager):
@@ -126,56 +129,21 @@ class RadixCacheManager(BaseCacheManager):
                 node.ref_count += 1
                 node = node.parent
 
-    def match_prefix(self, input_ids: torch.Tensor) -> Tuple[RadixCacheHandle, torch.Tensor]:
+    def match_prefix(self, input_ids: torch.Tensor) -> MatchResult:
         node, prefix_len = self._tree_walk(input_ids)
-        if prefix_len == 0:
-            assert node.is_root() and node is self.root_node and prefix_len == 0
-            return RadixCacheHandle(prefix_len, node), self.empty_tensor
-        value_list: List[torch.Tensor] = []
-        matched_node = node
-        while not node.is_root():
-            value_list.append(node.value)
-            node = node.parent
-        value_list.reverse()
-        return RadixCacheHandle(prefix_len, matched_node), torch.cat(value_list)
+        return MatchResult(RadixCacheHandle(prefix_len, node))
 
-    def insert_prefix(self, input_ids: torch.Tensor, indices: torch.Tensor) -> int:
+    def insert_prefix(self, input_ids: torch.Tensor, indices: torch.Tensor) -> InsertResult:
         input_len = len(input_ids)
         node, prefix_len = self._tree_walk(input_ids)
         assert prefix_len <= input_len == len(indices) and input_len % self.page_size == 0
-        if prefix_len < input_len:
+        if prefix_len != input_len:
             new_node = RadixTreeNode(self.key_fn)
             new_node.set_key_value(input_ids[prefix_len:], indices[prefix_len:].clone())
             new_node.set_parent(node)
             self.evictable_size += new_node.length
-        return prefix_len
-
-    def _tree_walk(self, input_ids: torch.Tensor) -> Tuple[RadixTreeNode, int]:
-        prefix_len = 0
-        indice_len = len(input_ids)
-        node = self.root_node
-        tic = time.monotonic_ns()
-
-        while prefix_len < indice_len:
-            child_node = node.children.get(self.key_fn(input_ids[prefix_len:]))
-            if child_node is None:
-                return node, prefix_len
-            node = child_node  # walk to child node
-
-            # NOTE: at least 1 page is matched, so match_len >= page_size
-            match_len = node.get_match_len(input_ids[prefix_len:])
-            match_len = align_down(match_len, self.page_size)
-            prefix_len += match_len
-
-            # need to split the node if not fully matched
-            if match_len != node.length:
-                node = node._split_at(match_len)
-                return node, prefix_len
-
-            # update timestamp for accessed node
-            node.timestamp = tic
-
-        return node, prefix_len
+            node = new_node
+        return InsertResult(prefix_len, RadixCacheHandle(input_len, node))
 
     def evict(self, size: int) -> torch.Tensor:
         if size == 0:
@@ -206,6 +174,19 @@ class RadixCacheManager(BaseCacheManager):
 
         return torch.cat(evicted_indices)
 
+    def reset(self) -> None:
+        raise NotImplementedError("RadixManager.reset is not implemented")
+
+    @property
+    def size_info(self) -> SizeInfo:
+        return SizeInfo(
+            evictable_size=self.evictable_size,
+            protected_size=self.protected_size,
+        )
+
+    def check_integrity(self) -> None:
+        pass
+
     def _collect_leave_nodes_for_evict(self) -> List[RadixTreeNode]:
         nodes: List[RadixTreeNode] = [self.root_node]
         leave_nodes: List[RadixTreeNode] = []
@@ -221,15 +202,35 @@ class RadixCacheManager(BaseCacheManager):
 
         return leave_nodes
 
-    def reset(self) -> None:
-        raise NotImplementedError("RadixManager.reset is not implemented")
+    def _tree_walk(self, input_ids: torch.Tensor) -> Tuple[RadixTreeNode, int]:
+        prefix_len = 0
+        indice_len = len(input_ids)
+        node = self.root_node
+        tic = time.monotonic_ns()
 
-    @property
-    def size_info(self) -> SizeInfo:
-        return SizeInfo(
-            evictable_size=self.evictable_size,
-            protected_size=self.protected_size,
-        )
+        while prefix_len < indice_len:
+            child_node = node.children.get(self.key_fn(input_ids[prefix_len:]))
+            if child_node is None:
+                return node, prefix_len
+            node = child_node  # walk to child node
 
-    def check_integrity(self) -> None:
-        pass
+            # NOTE: at least 1 page is matched, so match_len >= page_size
+            match_len = node.get_match_len(input_ids[prefix_len:])
+            match_len = align_down(match_len, self.page_size)
+            prefix_len += match_len
+
+            # need to split the node if not fully matched
+            if match_len != node.length:
+                node = node.split_at(match_len)
+                return node, prefix_len
+
+            # update timestamp for accessed node
+            node.timestamp = tic
+
+        return node, prefix_len
+
+
+def _get_key_fn(page_size: int) -> KEY_FN:
+    if page_size == 1:
+        return lambda x: x[0].item()
+    return lambda x: tuple(x[:page_size].tolist())

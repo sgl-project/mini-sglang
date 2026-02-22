@@ -1,32 +1,33 @@
-from __future__ import annotations
-
-from typing import Tuple
-
 import torch
 
-from .base import BaseCacheHandle, BaseCacheManager, SizeInfo
+from .base import BaseCacheHandle, BaseCacheManager, InsertResult, MatchResult, SizeInfo
 
 
 class NaiveCacheHandle(BaseCacheHandle):
-    pass
+    empty_tensor: torch.Tensor  # should be set by NaiveCacheManager
+
+    def __init__(self):
+        super().__init__(cached_len=0)
+
+    def get_matched_indices(self) -> torch.Tensor:
+        return self.empty_tensor
 
 
 class NaiveCacheManager(BaseCacheManager):
     def __init__(self, device: torch.device):
         self.device = device
         self.empty_tensor = torch.empty(0, dtype=torch.int32, device=device)
+        NaiveCacheHandle.empty_tensor = self.empty_tensor
         super().__init__()
 
-    def match_prefix(self, input_ids: torch.Tensor) -> Tuple[NaiveCacheHandle, torch.Tensor]:
-        _ = input_ids  # unused
-        return NaiveCacheHandle(0), self.empty_tensor
-
     def lock_handle(self, handle: BaseCacheHandle, unlock: bool = False) -> None:
-        _ = handle, unlock  # unused
+        pass
 
-    def insert_prefix(self, input_ids: torch.Tensor, indices: torch.Tensor) -> int:
-        assert len(indices) == len(input_ids)
-        return len(indices)
+    def match_prefix(self, input_ids: torch.Tensor) -> MatchResult:
+        return MatchResult(NaiveCacheHandle())
+
+    def insert_prefix(self, input_ids: torch.Tensor, indices: torch.Tensor) -> InsertResult:
+        return InsertResult(0, NaiveCacheHandle())
 
     def evict(self, size: int) -> torch.Tensor:
         if size == 0:

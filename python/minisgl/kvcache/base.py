@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import NamedTuple, Tuple
+from typing import NamedTuple
 
 import torch
 
@@ -41,6 +41,9 @@ class BaseKVCache(ABC):
 class BaseCacheHandle(ABC):
     cached_len: int
 
+    @abstractmethod
+    def get_matched_indices(self) -> torch.Tensor: ...
+
 
 class SizeInfo(NamedTuple):
     evictable_size: int
@@ -51,21 +54,17 @@ class SizeInfo(NamedTuple):
         return self.evictable_size + self.protected_size
 
 
+class InsertResult(NamedTuple):
+    cached_len: int  # length already in cache before insertion (should be freed)
+    handle: BaseCacheHandle  # cache handle for the inserted prefix
+
+
+class MatchResult(NamedTuple):
+    cuda_handle: BaseCacheHandle
+    # TODO: support HiCache
+
+
 class BaseCacheManager(ABC):
-    @abstractmethod
-    def match_prefix(self, input_ids: torch.Tensor) -> Tuple[BaseCacheHandle, torch.Tensor]:
-        """
-        Match prefix and return the indices of the matched prefix in the cache.
-        This operation will not modify the cache.
-        The returned indices is only safe to use when the handle is locked.
-
-        Args:
-            input_ids (torch.Tensor): The input ids to match. Shape: (seq_len,)
-        Returns:
-            handle (BaseCacheHandle): The handle to the matched prefix.
-            indices (torch.Tensor): The indices of the longest-matched prefix in the cache.
-        """
-
     @abstractmethod
     def lock_handle(self, handle: BaseCacheHandle, unlock: bool = False) -> None:
         """
@@ -81,7 +80,20 @@ class BaseCacheManager(ABC):
         """
 
     @abstractmethod
-    def insert_prefix(self, input_ids: torch.Tensor, indices: torch.Tensor) -> int:
+    def match_prefix(self, input_ids: torch.Tensor) -> MatchResult:
+        """
+        Match prefix and return the indices of the matched prefix in the cache.
+        This operation will not modify the cache.
+        The returned indices is only safe to use when the handle is locked.
+
+        Args:
+            input_ids (torch.Tensor): The input ids to match. Shape: (seq_len,)
+        Returns:
+            MatchResult: The match result containing the cache handles.
+        """
+
+    @abstractmethod
+    def insert_prefix(self, input_ids: torch.Tensor, indices: torch.Tensor) -> InsertResult:
         """
         Insert a new prefix into the cache.
         This operation will modify the cache.
@@ -90,8 +102,7 @@ class BaseCacheManager(ABC):
             indices (torch.Tensor): The indices to store the new prefix. Shape: (seq_len,)
 
         Returns:
-            int: The length of prefix that is already in the cache. This part is not
-                 inserted, so the caller should free these indices.
+            InsertResult: The result of the insertion.
         """
 
     @abstractmethod

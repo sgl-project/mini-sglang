@@ -26,7 +26,7 @@ class ChunkedReq(Req):
 
     @property
     def can_decode(self) -> bool:
-        return False
+        return False  # avoid being added to decode manager
 
 
 @dataclass
@@ -40,7 +40,8 @@ class PrefillAdder:
         if self.table_manager.available_size == 0:
             return None
 
-        handle, match_indices = self.cache_manager.match_req(req)
+        # TODO: consider host cache match case
+        handle = self.cache_manager.match_req(req).cuda_handle
         cached_len = handle.cached_len
         # TODO: better estimate policy
         extend_len = req.input_len - cached_len
@@ -57,7 +58,7 @@ class PrefillAdder:
             device_ids = self.table_manager.token_pool[table_idx][:cached_len]
             page_entry = self.table_manager.page_table[table_idx][:cached_len]
             device_ids.copy_(req.input_ids[:cached_len].pin_memory(), non_blocking=True)
-            page_entry.copy_(match_indices)
+            page_entry.copy_(handle.get_matched_indices())
 
         return handle, table_idx
 
@@ -76,7 +77,7 @@ class PrefillAdder:
         self.reserved_size += remain_len + pending_req.output_len
         # NOTE: update the tokens ids only; new pages will be allocated in the scheduler
         _slice = slice(cached_len, cached_len + chunk_size)
-        device_ids = self.table_manager.token_pool[table_idx][_slice]
+        device_ids = self.table_manager.token_pool[table_idx, _slice]
         device_ids.copy_(pending_req.input_ids[_slice].pin_memory(), non_blocking=True)
         return CLS(
             input_ids=pending_req.input_ids[: cached_len + chunk_size],

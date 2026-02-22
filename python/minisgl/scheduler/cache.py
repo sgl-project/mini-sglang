@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, List, Tuple
 
 import torch
 from minisgl.core import Req
-from minisgl.kvcache import BaseCacheHandle, create_cache_manager
+from minisgl.kvcache import BaseCacheHandle, MatchResult, create_cache_manager
 from minisgl.utils import align_down, div_ceil
 
 if TYPE_CHECKING:
@@ -22,7 +22,7 @@ class CacheManager:
         self.num_pages = num_pages
         self.page_size = page_size
 
-    def match_req(self, req: PendingReq):
+    def match_req(self, req: PendingReq) -> MatchResult:
         input_len = req.input_len
         assert input_len > 0, "Input length must be greater than 0."
         return self.manager.match_prefix(req.input_ids[: input_len - 1])
@@ -50,18 +50,32 @@ class CacheManager:
             allocated = self._page_to_token(self._allocate(needed_pages))
             _write_page_table(page_table, allocated, allocation_info, self.page_size)
 
-    def free_and_cache_finished_req(self, req: Req, page_table: torch.Tensor) -> None:
+    def cache_req(self, req: Req, page_table: torch.Tensor, *, finished: bool) -> None:
+        # ==================================== valid cache region ====================================
+        # [0, req.cached_len)                       This part is valid for attention kernel read/write.
+        # [0, old_handle.cached_len)                This part is in the prefix cache before prefill.
+        # [old_handle.cached_len, req.cached_len)   This part is allocated by cache manager for this request.
+        # ================================== allocated cache region ==================================
+        # [old_handle.cached_len, cached_len)       This part was not in the prefix cache when prefill,
+        #                                           but later cached by other requests.
+        #                                           We must free them to avoid memory leak.
+        # [cached_len, new_handle.cached_len)       This part is newly inserted into the prefix cache.
+        # [new_handle.cached_len, req.cached_len)   This part is tailing part that can not inserted into the prefix cache.
+        #                                           We should free it if the request has finished.
         insert_len = align_down(req.cached_len, self.page_size)
         insert_ids = req.input_ids[:insert_len]
         table_entry = page_table[req.table_idx]
-        old_cache_len = req.cache_handle.cached_len
-        new_cache_len = self.manager.insert_prefix(insert_ids, table_entry[:insert_len])
-        # this part is already in the prefix cache, free it
-        self._free(table_entry[old_cache_len:new_cache_len])
-        # this unaligned tail part should be freed
-        self._free(table_entry[insert_len : req.cached_len])
+        old_handle = req.cache_handle
+        cached_len, new_handle = self.manager.insert_prefix(insert_ids, table_entry[:insert_len])
         # unlock until all operations on handle is done
-        self.unlock(req.cache_handle)
+        self.unlock(old_handle)
+        # this part is already in the prefix cache, free it
+        self._free(table_entry[old_handle.cached_len : cached_len])
+        if finished:  # this tail part should be freed
+            self._free(table_entry[new_handle.cached_len : req.cached_len])
+        else:  # keep the tail part, update the handle
+            req.cache_handle = new_handle
+            self.lock(new_handle)
 
     def check_integrity(self) -> None:
         self.manager.check_integrity()
