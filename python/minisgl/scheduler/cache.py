@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from .utils import PendingReq
 
 
+HICACHE_LOAD_LENGTH_THRESHOLD = 16
+
+
 class CacheManager:
     def __init__(self, num_pages: int, page_size: int, page_table: torch.Tensor, type: str):
         # The `_free_slots` follows a page-aligned manner. For example, if page_size = 2,
@@ -23,6 +26,20 @@ class CacheManager:
         self.num_pages = num_pages
         self.page_table = page_table
         self.page_size = page_size
+        self.enable_hicache = type == "hiradix"
+        if self.enable_hicache:
+            from minisgl.hicache import HiCacheController
+
+            self.hicache_controller = HiCacheController(self.prefix_cache, num_pages * page_size)
+
+    def prepare_host_load(self, host_handle: BaseCacheHandle, cuda_handle: BaseCacheHandle):
+        needed_len = host_handle.cached_len - cuda_handle.cached_len
+        if needed_len < HICACHE_LOAD_LENGTH_THRESHOLD:
+            return cuda_handle
+        assert needed_len % self.page_size == 0, "allocation must be page-aliged"
+        indices = self._page_to_token(self._allocate(needed_len // self.page_size))
+        self.hicache_controller.prepare_load(host_handle, cuda_handle, indices)
+        return host_handle
 
     def match_req(self, req: PendingReq) -> MatchResult:
         input_len = req.input_len
@@ -68,6 +85,8 @@ class CacheManager:
         page_indices = self.page_table[req.table_idx, : req.cached_len]
         old_handle = req.cache_handle
         cached_len, new_handle = self.prefix_cache.insert_prefix(insert_ids, page_indices)
+        if self.enable_hicache:
+            self.hicache_controller.prepare_write(new_handle)
         # unlock until all operations on handle is done
         self.unlock(old_handle)
         # this part is already in the prefix cache, free it

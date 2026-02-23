@@ -58,6 +58,13 @@ def create_radix_cache(device: torch.device):
     return RadixPrefixCache(device=device)
 
 
+@SUPPORTED_CACHE_MANAGER.register("hiradix")
+def create_hiradix_cache(device: torch.device):
+    from .hiradix_cache import HiRadixPrefixCache
+
+    return HiRadixPrefixCache(device=device)
+
+
 def create_prefix_cache(device: torch.device, type: str) -> BasePrefixCache:
     return SUPPORTED_CACHE_MANAGER[type](device)
 
