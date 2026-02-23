@@ -39,6 +39,12 @@ class BaseKVCachePool(ABC):
     @abstractmethod
     def set_hicache_counter(self, counter) -> None: ...
 
+    @abstractmethod
+    def create_host_memory_pool(self, num_pages: int) -> BaseKVCachePool: ...
+
+    @abstractmethod
+    def get_per_token_bytes(self) -> int: ...
+
 
 @dataclass(frozen=True)
 class BaseCacheHandle(ABC):

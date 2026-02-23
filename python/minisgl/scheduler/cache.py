@@ -30,7 +30,7 @@ class CacheManager:
         if self.enable_hicache:
             from minisgl.hicache import HiCacheController
 
-            self._hicache_controller = HiCacheController(self._prefix_cache, num_pages * page_size)
+            self._hicache_controller = HiCacheController(self._prefix_cache, num_pages)
             self.start_load_host = self._hicache_controller.start_load
             self.refresh_hicache = self._hicache_controller.refresh
 
