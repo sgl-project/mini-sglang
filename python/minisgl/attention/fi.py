@@ -20,7 +20,6 @@ if TYPE_CHECKING:
         BatchPrefillWithPagedKVCacheWrapper,
         CUDAGraphBatchDecodeWithPagedKVCacheWrapper,
     )
-    from minisgl.kvcache import BaseKVCache
     from minisgl.models import ModelConfig
 
 
@@ -79,15 +78,15 @@ class FIMetadata(BaseAttnMetadata):
 
 
 class FlashInferBackend(BaseAttnBackend):
-    def __init__(self, config: ModelConfig, kvcache: BaseKVCache) -> None:
+    def __init__(self, config: ModelConfig) -> None:
         from flashinfer import (
             BatchDecodeWithPagedKVCacheWrapper,
             BatchPrefillWithPagedKVCacheWrapper,
         )
 
         self.config = config
-        self.kvcache = kvcache
-        self.device = kvcache.device
+        self.kvcache = get_global_ctx().kv_cache
+        self.device = self.kvcache.device
         self.float_workspace_buffer = torch.empty(
             128 * 1024 * 1024, dtype=torch.uint8, device=self.device
         )

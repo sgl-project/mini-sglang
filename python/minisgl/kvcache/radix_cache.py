@@ -9,7 +9,7 @@ import torch
 from minisgl.core import get_global_ctx
 from minisgl.utils import align_down
 
-from .base import BaseCacheHandle, BaseCacheManager, InsertResult, MatchResult, SizeInfo
+from .base import BaseCacheHandle, BasePrefixCache, InsertResult, MatchResult, SizeInfo
 
 KEY_FN: TypeAlias = Callable[[torch.Tensor], Any]
 
@@ -98,7 +98,7 @@ class RadixCacheHandle(BaseCacheHandle):
         return torch.cat(value_list)
 
 
-class RadixCacheManager(BaseCacheManager):
+class RadixPrefixCache(BasePrefixCache):
     def __init__(self, device: torch.device):
         super().__init__()
         self.device = device

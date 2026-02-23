@@ -4,10 +4,10 @@ import torch
 from minisgl.distributed import get_tp_info
 from minisgl.utils import div_even
 
-from .base import BaseKVCache
+from .base import BaseKVCachePool
 
 
-class MHAKVCache(BaseKVCache):
+class MHAKVCache(BaseKVCachePool):
     """
     Base class for key-value caches.
     This class defines the interface for key-value caches used in LLMs.

@@ -1,10 +1,10 @@
 import torch
 
-from .base import BaseCacheHandle, BaseCacheManager, InsertResult, MatchResult, SizeInfo
+from .base import BaseCacheHandle, BasePrefixCache, InsertResult, MatchResult, SizeInfo
 
 
 class NaiveCacheHandle(BaseCacheHandle):
-    empty_tensor: torch.Tensor  # should be set by NaiveCacheManager
+    empty_tensor: torch.Tensor  # should be set by NaivePrefixCache
 
     def __init__(self):
         super().__init__(cached_len=0)
@@ -13,7 +13,7 @@ class NaiveCacheHandle(BaseCacheHandle):
         return self.empty_tensor
 
 
-class NaiveCacheManager(BaseCacheManager):
+class NaivePrefixCache(BasePrefixCache):
     def __init__(self, device: torch.device):
         self.device = device
         self.empty_tensor = torch.empty(0, dtype=torch.int32, device=device)

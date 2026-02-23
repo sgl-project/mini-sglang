@@ -7,7 +7,7 @@ import torch
 from minisgl.attention import create_attention_backend
 from minisgl.core import Batch, Context, Req, set_global_ctx
 from minisgl.distributed import destroy_distributed, enable_pynccl_distributed, set_tp_info
-from minisgl.kvcache import create_kvcache
+from minisgl.kvcache import create_kvcache_pool
 from minisgl.layers import set_rope_device
 from minisgl.models import create_model, load_weight
 from minisgl.moe import create_moe_backend
@@ -53,7 +53,7 @@ class Engine:
         # ======================= KV cache initialization ========================
         self.num_pages = self._determine_num_pages(init_free_memory, config)
         num_tokens = self.num_pages * config.page_size
-        self.kv_cache = create_kvcache(
+        self.ctx.kv_cache = self.kv_cache = create_kvcache_pool(
             model_config=config.model_config,
             num_pages=self.num_pages + 1,  # +1 for dummy page
             page_size=config.page_size,
@@ -73,9 +73,7 @@ class Engine:
 
         # ======================= Attention & MoE backend initialization ========================
         self.ctx.attn_backend = self.attn_backend = create_attention_backend(
-            config.attention_backend,
-            config.model_config,
-            self.kv_cache,
+            config.attention_backend, config.model_config
         )
         if config.model_config.is_moe:
             self.ctx.moe_backend = self.moe_backend = create_moe_backend(config.moe_backend)

@@ -7,7 +7,7 @@ from typing import NamedTuple
 import torch
 
 
-class BaseKVCache(ABC):
+class BaseKVCachePool(ABC):
     """
     Base class for key-value caches.
     This class defines the interface for key-value caches used.
@@ -64,7 +64,7 @@ class MatchResult(NamedTuple):
     # TODO: support HiCache
 
 
-class BaseCacheManager(ABC):
+class BasePrefixCache(ABC):
     @abstractmethod
     def lock_handle(self, handle: BaseCacheHandle, unlock: bool = False) -> None:
         """

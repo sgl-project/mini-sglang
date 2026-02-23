@@ -22,14 +22,15 @@ def reset_global_ctx():
 
 def _make_cache_manager(num_pages: int, page_size: int) -> CacheManager:
     """Helper to create a CacheManager with radix cache on CPU."""
+    page_table = torch.empty((1,))
     ctx = core.Context(page_size=page_size)
     core.set_global_ctx(ctx)
-    return CacheManager(torch.device("cpu"), num_pages, page_size, type="radix")
+    return CacheManager(num_pages, page_size, page_table, type="radix")
 
 
 def _insert_evictable(cm: CacheManager, input_ids: torch.Tensor, indices: torch.Tensor):
     """Insert a prefix into the radix cache so it becomes evictable."""
-    cm.manager.insert_prefix(input_ids, indices)
+    cm.prefix_cache.insert_prefix(input_ids, indices)
 
 
 def _assert_all_page_aligned(tensor: torch.Tensor, page_size: int, label: str = ""):
@@ -37,9 +38,9 @@ def _assert_all_page_aligned(tensor: torch.Tensor, page_size: int, label: str = 
     if len(tensor) == 0:
         return
     misaligned = tensor[tensor % page_size != 0]
-    assert len(misaligned) == 0, (
-        f"{label} contains non-page-aligned values: {misaligned.tolist()}, page_size={page_size}"
-    )
+    assert (
+        len(misaligned) == 0
+    ), f"{label} contains non-page-aligned values: {misaligned.tolist()}, page_size={page_size}"
 
 
 def _assert_no_overlap(pages: torch.Tensor, page_size: int):
@@ -65,7 +66,7 @@ class TestAllocateEvictPageAlignment:
 
         # Exhaust all free pages
         cm._allocate(num_pages)
-        assert len(cm._free_slots) == 0
+        assert len(cm.free_slots) == 0
 
         # Insert 2 pages worth of data into the cache (evictable)
         input_ids = torch.arange(page_size * 2, dtype=torch.int32)
@@ -76,7 +77,7 @@ class TestAllocateEvictPageAlignment:
         # Allocate 1 page — triggers eviction
         allocated = cm._allocate(1)
         _assert_all_page_aligned(allocated, page_size, "allocated")
-        _assert_all_page_aligned(cm._free_slots, page_size, "_free_slots after evict")
+        _assert_all_page_aligned(cm.free_slots, page_size, "_free_slots after evict")
 
     def test_consecutive_allocations_after_evict_no_overlap(self):
         """Multiple allocations after eviction must not produce overlapping pages."""
@@ -120,7 +121,7 @@ class TestAllocateEvictPageAlignment:
         cm._allocate(1)
 
         # All remaining free slots must be page-aligned
-        _assert_all_page_aligned(cm._free_slots, page_size, "_free_slots")
+        _assert_all_page_aligned(cm.free_slots, page_size, "_free_slots")
 
     def test_allocate_exact_pages_needed_from_evict(self):
         """When exactly N pages are needed, eviction must provide at least N pages."""
@@ -190,9 +191,14 @@ class TestAllocateEvictPageAlignment:
 
         # Now exhaust free slots and trigger eviction
         cm._allocate(6)
-        assert len(cm._free_slots) == 0
+        assert len(cm.free_slots) == 0
 
         # Allocate 1 more page — must evict from cache
         allocated = cm._allocate(1)
         _assert_all_page_aligned(allocated, page_size, "allocated after evict")
-        _assert_all_page_aligned(cm._free_slots, page_size, "_free_slots after evict")
+        _assert_all_page_aligned(cm.free_slots, page_size, "_free_slots after evict")
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])
+

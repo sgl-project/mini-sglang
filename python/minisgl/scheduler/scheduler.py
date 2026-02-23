@@ -57,7 +57,7 @@ class Scheduler(SchedulerIOMixin):
         # initialize other managers
         self.table_manager = TableManager(config.max_running_req, self.engine.page_table)
         self.cache_manager = CacheManager(
-            self.device, self.engine.num_pages, config.page_size, config.cache_type
+            self.engine.num_pages, config.page_size, self.engine.page_table, config.cache_type
         )
         self.decode_manager = DecodeManager(config.page_size)
         self.prefill_manager = PrefillManager(
@@ -65,14 +65,12 @@ class Scheduler(SchedulerIOMixin):
         )
 
         # some alias for easy access
-        self.tp_info = config.tp_info
         self.finished_reqs: Set[Req] = set()
         self.tokenizer = load_tokenizer(config.model_path)
         self.eos_token_id = self.tokenizer.eos_token_id
-        self.page_table = self.engine.page_table
-        self.page_size = config.page_size
         self.token_pool = self.table_manager.token_pool
         self.prefill_budget = config.max_extend_tokens
+        # self.config = config
 
         # Initialize the I/O mixin
         super().__init__(config, self.engine.tp_cpu_group)
@@ -163,7 +161,7 @@ class Scheduler(SchedulerIOMixin):
                     self._free_req_resources(req)
                     new_finished_reqs.add(req)
                 elif batch.is_prefill:  # for prefill, non-chunk req, cache the prefix
-                    self.cache_manager.cache_req(req, self.page_table, finished=False)
+                    self.cache_manager.cache_req(req, finished=False)
 
         self.finished_reqs = new_finished_reqs
         self.send_result(reply)
@@ -201,15 +199,15 @@ class Scheduler(SchedulerIOMixin):
 
     def _free_req_resources(self, req: Req) -> None:
         self.table_manager.free(req.table_idx)
-        self.cache_manager.cache_req(req, self.page_table, finished=True)
+        self.cache_manager.cache_req(req, finished=True)
 
     def _prepare_batch(self, batch: Batch) -> ForwardInput:
         self.engine.graph_runner.pad_batch(batch)
-        self.cache_manager.allocate_paged(batch.reqs, self.page_table)
+        self.cache_manager.allocate_paged(batch.reqs)
         batch.positions = _make_positions(batch, self.device)
         input_mapping = _make_input_tuple(batch, self.device)
         write_mapping = _make_write_tuple(batch, self.device)
-        batch.out_loc = self.page_table[input_mapping]
+        batch.out_loc = self.engine.page_table[input_mapping]
         self.engine.attn_backend.prepare_metadata(batch)
         return ForwardInput(
             batch=batch,

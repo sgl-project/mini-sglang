@@ -31,7 +31,7 @@ def _run_scheduler(args: ServerArgs, ack_queue: mp.Queue[str]) -> None:
             scheduler.run_forever()
         except KeyboardInterrupt:
             logger = init_logger(__name__)
-            if scheduler.tp_info.is_primary():
+            if args.tp_info.is_primary():
                 print()  # for a clean newline after ^C
                 logger.info("Scheduler exiting gracefully...")
             scheduler.shutdown()

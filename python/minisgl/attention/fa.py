@@ -11,7 +11,6 @@ from .base import BaseAttnBackend, BaseAttnMetadata
 from .utils import BaseCaptureData
 
 if TYPE_CHECKING:
-    from minisgl.kvcache import BaseKVCache
     from minisgl.models import ModelConfig
 
 
@@ -35,14 +34,15 @@ class FAMetadata(BaseAttnMetadata):
 
 
 class FlashAttentionBackend(BaseAttnBackend):
-    def __init__(self, config: ModelConfig, kvcache: BaseKVCache):
+    def __init__(self, config: ModelConfig):
+        ctx = get_global_ctx()
         self.config = config
-        self.kvcache = kvcache
+        self.kvcache = ctx.kv_cache
+        self.page_size = ctx.page_size
         self.capture: FACaptureData | None = None
         self.max_graph_bs = 0
         self.capture_bs: List[int] = []
         self.scale = config.head_dim**-0.5
-        self.page_size = get_global_ctx().page_size
         self.version = 4 if is_sm100_supported() else 3
 
     def forward(
