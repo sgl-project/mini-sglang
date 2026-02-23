@@ -20,8 +20,8 @@ class CacheManager:
         # The `_free_slots` follows a page-aligned manner. For example, if page_size = 2,
         # the `_free_slots` may look like [0, 2, 4, 6, ...], and each slot represents a page.
         device = page_table.device
-        self.free_slots = torch.arange(num_pages, dtype=torch.int32, device=device) * page_size
-        self.prefix_cache = create_prefix_cache(device=device, type=type)
+        self._free_slots = torch.arange(num_pages, dtype=torch.int32, device=device) * page_size
+        self._prefix_cache = create_prefix_cache(device=device, type=type)
         self.device = device
         self.num_pages = num_pages
         self.page_table = page_table
@@ -30,31 +30,33 @@ class CacheManager:
         if self.enable_hicache:
             from minisgl.hicache import HiCacheController
 
-            self.hicache_controller = HiCacheController(self.prefix_cache, num_pages * page_size)
+            self._hicache_controller = HiCacheController(self._prefix_cache, num_pages * page_size)
+            self.start_load_host = self._hicache_controller.start_load
+            self.refresh_hicache = self._hicache_controller.refresh
 
-    def prepare_host_load(self, host_handle: BaseCacheHandle, cuda_handle: BaseCacheHandle):
+    def prepare_load_host(self, host_handle: BaseCacheHandle, cuda_handle: BaseCacheHandle):
         needed_len = host_handle.cached_len - cuda_handle.cached_len
         if needed_len < HICACHE_LOAD_LENGTH_THRESHOLD:
             return cuda_handle
         assert needed_len % self.page_size == 0, "allocation must be page-aliged"
         indices = self._page_to_token(self._allocate(needed_len // self.page_size))
-        self.hicache_controller.prepare_load(host_handle, cuda_handle, indices)
+        self._hicache_controller.prepare_load(host_handle, cuda_handle, indices)
         return host_handle
 
     def match_req(self, req: PendingReq) -> MatchResult:
         input_len = req.input_len
         assert input_len > 0, "Input length must be greater than 0."
-        return self.prefix_cache.match_prefix(req.input_ids[: input_len - 1])
+        return self._prefix_cache.match_prefix(req.input_ids[: input_len - 1])
 
     @property
     def available_size(self) -> int:
-        return self.prefix_cache.size_info.evictable_size + len(self.free_slots) * self.page_size
+        return self._prefix_cache.size_info.evictable_size + len(self._free_slots) * self.page_size
 
     def lock(self, handle: BaseCacheHandle) -> None:
-        self.prefix_cache.lock_handle(handle, unlock=False)
+        self._prefix_cache.lock_handle(handle, unlock=False)
 
     def unlock(self, handle: BaseCacheHandle) -> None:
-        self.prefix_cache.lock_handle(handle, unlock=True)
+        self._prefix_cache.lock_handle(handle, unlock=True)
 
     def allocate_paged(self, reqs: List[Req]) -> None:
         needed_pages = 0
@@ -84,9 +86,9 @@ class CacheManager:
         insert_ids = req.input_ids[: req.cached_len]
         page_indices = self.page_table[req.table_idx, : req.cached_len]
         old_handle = req.cache_handle
-        cached_len, new_handle = self.prefix_cache.insert_prefix(insert_ids, page_indices)
+        cached_len, new_handle = self._prefix_cache.insert_prefix(insert_ids, page_indices)
         if self.enable_hicache:
-            self.hicache_controller.prepare_write(new_handle)
+            self._hicache_controller.prepare_write(new_handle)
         # unlock until all operations on handle is done
         self.unlock(old_handle)
         # this part is already in the prefix cache, free it
@@ -98,16 +100,16 @@ class CacheManager:
             self.lock(new_handle)
 
     def check_integrity(self) -> None:
-        self.prefix_cache.check_integrity()
-        cache_pages = self.prefix_cache.size_info.total_size // self.page_size
-        if len(self.free_slots) + cache_pages != self.num_pages:
+        self._prefix_cache.check_integrity()
+        cache_pages = self._prefix_cache.size_info.total_size // self.page_size
+        if len(self._free_slots) + cache_pages != self.num_pages:
             raise RuntimeError(
                 "CacheManager integrity check failed:"
-                f" free_pages({len(self.free_slots)}) +"
+                f" free_pages({len(self._free_slots)}) +"
                 f" cache_pages({cache_pages}) != num_pages({self.num_pages})"
             )
         if self.page_size > 1:
-            assert torch.all(self.free_slots % self.page_size == 0)
+            assert torch.all(self._free_slots % self.page_size == 0)
 
     @contextmanager
     def lazy_free_region(self):
@@ -120,20 +122,20 @@ class CacheManager:
             yield
         finally:
             del self._free
-            self.free_slots = torch.cat([self.free_slots] + lazy_free_list)
+            self._free_slots = torch.cat([self._free_slots] + lazy_free_list)
 
     def _allocate(self, needed_pages: int) -> torch.Tensor:
-        if needed_pages > (free_pages := len(self.free_slots)):
-            evicted = self.prefix_cache.evict((needed_pages - free_pages) * self.page_size)
-            self.free_slots = torch.cat([self.free_slots, evicted[:: self.page_size]])
-            assert len(self.free_slots) >= needed_pages, "Eviction did not free enough space."
-        allocated = self.free_slots[:needed_pages]
-        self.free_slots = self.free_slots[needed_pages:]
+        if needed_pages > (free_pages := len(self._free_slots)):
+            evicted = self._prefix_cache.evict((needed_pages - free_pages) * self.page_size)
+            self._free_slots = torch.cat([self._free_slots, evicted[:: self.page_size]])
+            assert len(self._free_slots) >= needed_pages, "Eviction did not free enough space."
+        allocated = self._free_slots[:needed_pages]
+        self._free_slots = self._free_slots[needed_pages:]
         return allocated
 
     def _free(self, indices: torch.Tensor) -> None:
         if len(indices) > 0:
-            self.free_slots = torch.cat([self.free_slots, indices[:: self.page_size]])
+            self._free_slots = torch.cat([self._free_slots, indices[:: self.page_size]])
 
     def _page_to_token(self, pages: torch.Tensor) -> torch.Tensor:
         if self.page_size == 1:

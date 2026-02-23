@@ -52,7 +52,7 @@ class PrefillAdder:
             return self.cache_manager.unlock(cuda_handle)
 
         if host_handle is not None:  # prepare hicache transfer, update the handle
-            cuda_handle = self.cache_manager.prepare_host_load(host_handle, cuda_handle)
+            cuda_handle = self.cache_manager.prepare_load_host(host_handle, cuda_handle)
 
         table_idx = self.table_manager.allocate()
         if (cached_len := cuda_handle.cached_len) > 0:  # NOTE: set the cached part
