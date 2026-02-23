@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 from minisgl.distributed import get_tp_info
 from minisgl.utils import div_even
 
 from .base import BaseKVCachePool
+
+if TYPE_CHECKING:
+    from minisgl.hicache import HiCacheCounter
 
 
 class MHAKVCache(BaseKVCachePool):
@@ -35,12 +40,16 @@ class MHAKVCache(BaseKVCachePool):
         self._v_buffer = self._kv_buffer[1]
         self._device = device
         self._storage_shape = (num_pages * page_size, local_kv_heads, head_dim)
+        self.counter: HiCacheCounter | None = None
 
     def k_cache(self, index: int) -> torch.Tensor:
         return self._k_buffer[index]
 
     def v_cache(self, index: int) -> torch.Tensor:
         return self._v_buffer[index]
+
+    def set_hicache_counter(self, counter) -> None:
+        self.counter = counter
 
     def store_kv(
         self, k: torch.Tensor, v: torch.Tensor, out_loc: torch.Tensor, layer_id: int
@@ -54,6 +63,8 @@ class MHAKVCache(BaseKVCachePool):
             k=k,
             v=v,
         )
+        if self.counter is not None:
+            self.counter.wait(layer_id)
 
     @property
     def device(self) -> torch.device:
