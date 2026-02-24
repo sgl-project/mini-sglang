@@ -5,6 +5,7 @@ from typing import Dict
 
 import safetensors
 import torch
+from tqdm import tqdm
 from minisgl.distributed import get_tp_info
 from minisgl.utils import div_ceil, download_hf_weight
 
@@ -71,13 +72,17 @@ def load_weight(model_path: str, device: torch.device) -> Dict[str, torch.Tensor
     model_folder = download_hf_weight(model_path)
     files = glob.glob(f"{model_folder}/*.safetensors")
     state_dict: Dict[str, torch.Tensor] = {}
-    for file in sorted(files):
-        with safetensors.safe_open(file, framework="pt", device="cpu") as f:
+
+    tp_info = get_tp_info()
+    disable_tqdm = (tp_info.rank != 0) if tp_info.size > 1 else False
+    device_str = str(device)
+
+    for file in tqdm(sorted(files), desc="Loading weights", disable=disable_tqdm):
+        with safetensors.safe_open(file, framework="pt", device=device_str) as f:
             for name in f.keys():
                 state_dict[name] = f.get_tensor(name)
 
-    if get_tp_info().size > 1:
+    if tp_info.size > 1:
         state_dict = _shard_state_dict(state_dict)
 
-    state_dict = {k: v.to(device) for k, v in state_dict.items()}
     return _merge_state_dict(state_dict)

@@ -8,6 +8,42 @@ import torch
 
 _STATE_DICT: TypeAlias = Dict[str, torch.Tensor]
 
+_EXPERT_KEY_SUFFIXES = ("", ".weight", ".bias")
+
+
+def _collect_expert_keys(
+    state_dict: _STATE_DICT, prefix: str, param_name: str
+) -> List[str]:
+    """Collect expert weight keys in O(num_experts) via direct dict lookup."""
+    keys: List[str] = []
+    idx = 0
+    while True:
+        found = False
+        for suffix in _EXPERT_KEY_SUFFIXES:
+            candidate = f"{prefix}.{idx}.{param_name}{suffix}"
+            if candidate in state_dict:
+                keys.append(candidate)
+                found = True
+                break
+        if not found:
+            break
+        idx += 1
+
+    if keys:
+        return keys
+
+    # Fallback: linear scan for non-standard key naming conventions
+    for key in list(state_dict.keys()):
+        if prefix in key and param_name in key:
+            keys.append(key)
+
+    def _expert_index(k: str) -> int:
+        match = re.search(r"experts\.(\d+)\.", k)
+        return int(match.group(1)) if match else 0
+
+    keys.sort(key=_expert_index)
+    return keys
+
 
 def _concat_prefix(prefix: str, name: str) -> str:
     return f"{prefix}.{name}" if prefix else name
@@ -44,21 +80,9 @@ class BaseOP:
             if isinstance(param, torch.Tensor):
                 if "experts" in prefix:
                     mapped_name = name
-                    matched_keys = []
-                    for key in list(state_dict.keys()):
-                        if prefix in key and mapped_name in key:
-                            matched_keys.append(key)
+                    matched_keys = _collect_expert_keys(state_dict, prefix, mapped_name)
 
-                    def extract_expert_index(k):
-                        match = re.search(r"experts\.(\d+)\.", k)
-                        return int(match.group(1)) if match else 0
-
-                    matched_keys.sort(key=extract_expert_index)
-
-                    items = []
-                    for k in matched_keys:
-                        items.append(state_dict.pop(k))
-
+                    items = [state_dict.pop(k) for k in matched_keys]
                     if not items:
                         raise ValueError(
                             f"No weights found in state_dict for {prefix} and {mapped_name}"
