@@ -11,6 +11,8 @@ from minisgl.utils import init_logger
 if TYPE_CHECKING:
     from minisgl.kvcache import BaseCacheHandle, BasePrefixCache
     from minisgl.kvcache.hiradix_cache import HiRadixPrefixCache
+    from minisgl.scheduler import SchedulerConfig
+
 
 logger = init_logger(__name__)
 
@@ -51,7 +53,7 @@ RESET_ACK_THRESHOLD = 512
 
 
 class HiCacheController:
-    def __init__(self, prefix_cache: BasePrefixCache, num_pages: int):
+    def __init__(self, prefix_cache: BasePrefixCache, num_pages: int, config: SchedulerConfig):
         self.hiradix_cache = cast("HiRadixPrefixCache", prefix_cache)
         self.load_queue: List[Transaction] = []
         self.write_queue: List[Transaction] = []
@@ -62,15 +64,14 @@ class HiCacheController:
         self.write_stream = torch.cuda.Stream()
         self.load_stream_ctx = torch.cuda.stream(self.load_stream)
         self.write_stream_ctx = torch.cuda.stream(self.write_stream)
-        ctx = get_global_ctx()
-        self.kvcache = ctx.kv_cache
+        self.kvcache = get_global_ctx().kv_cache
         self.counter_ring_buffer = [
             HiCacheCounter(self.kvcache.num_layers) for _ in range(RING_BUFFER_SIZE)
         ]
         self.ring_index = 0
         self.device = self.hiradix_cache.device
-        num_host_pages = int(num_pages * 4)
-        num_host_tokens = num_host_pages * ctx.page_size
+        num_host_pages = int(num_pages * config.hicache_ratio)
+        num_host_tokens = num_host_pages * config.page_size
         self.token_bytes = self.kvcache.get_per_token_bytes()
         total_bytes_gb = num_host_tokens * self.token_bytes / (1024**3)
         self.free_slots = torch.arange(num_host_tokens, dtype=torch.int32, device="cpu")
@@ -138,7 +139,7 @@ class HiCacheController:
         host_indices, cuda_indices = self._merge_transactions(self.load_queue)
         num_tokens = len(host_indices)
         current_stream = torch.cuda.current_stream()
-        counter.start_event.record(current_stream)
+        counter.start_event.record(self.load_stream)
         with self.load_stream_ctx:
             self.load_stream.wait_stream(current_stream)
             for i in range(self.kvcache.num_layers):
@@ -159,7 +160,7 @@ class HiCacheController:
         self.load_queue.clear()
         ack_id = self._allocate_ack_id()
         self.ack_load_queue.append(Ack(ack_id, [], num_tokens, counter.start_event, finish_event))
-        logger.info_rank0(f"HiCache Load [{ack_id}]: {num_tokens} tokens")
+        logger.info_rank0(f"HiCache Load  [{ack_id}]: {num_tokens:>5} tokens")
 
     def start_write(self) -> None:
         if not self.write_queue:
@@ -172,9 +173,9 @@ class HiCacheController:
         current_stream = torch.cuda.current_stream()
         start_event = _create_event(enable_timing=True)
         finish_event = _create_event(enable_timing=True)
-        start_event.record(current_stream)
+        start_event.record(self.write_stream)
         with self.write_stream_ctx:
-            self.write_stream.wait_event(start_event)
+            self.write_stream.wait_stream(current_stream)
             # TODO: refactor this kernel
             transfer_hicache_all_layer(
                 k_ptr_dst=self.host_k_cache_ptrs,
@@ -195,7 +196,7 @@ class HiCacheController:
         self.write_queue.clear()
         ack_id = self._allocate_ack_id()
         self.ack_write_queue.append(Ack(ack_id, handles, num_tokens, start_event, finish_event))
-        logger.info_rank0(f"HiCache Write [{ack_id}]: {num_tokens} tokens")
+        logger.info_rank0(f"HiCache Write [{ack_id}]: {num_tokens:>5} tokens")
 
     def refresh(self, tp_cpu_group: torch.distributed.ProcessGroup) -> None:
         # NOTE: load has no side-effect (only logging), so no need to sync
@@ -204,7 +205,7 @@ class HiCacheController:
             if not ack.finish_event.query():
                 break
             finish_count += 1
-            self._log_transaction(ack, "Load")
+            self._log_transaction(ack, "Load ")
         self.ack_load_queue = self.ack_load_queue[finish_count:]
 
         finish_count = 0
@@ -255,8 +256,8 @@ class HiCacheController:
         dur = ack.start_event.elapsed_time(ack.finish_event)
         bandwidth = (self.token_bytes * ack.num_tokens / (1024**3)) / (dur / 1000)
         logger.info(
-            f"HiCache {stage} [{ack.ack_id}]: {ack.num_tokens} tokens: "
-            f"duration = {dur:.2f}ms, bandwidth = {bandwidth:.2f} GB/s"
+            f"HiCache {stage} [{ack.ack_id}]: {ack.num_tokens:>5} tokens: "
+            f"duration = {dur:>5.2f} ms, bandwidth = {bandwidth:>5.2f} GB/s"
         )
 
 
