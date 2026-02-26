@@ -201,7 +201,7 @@ class Engine:
         for req in batch.reqs:
             req.complete_one()
 
-        next_tokens_gpu = self.sampler.sample(logits[: batch.size], args).to(torch.int32)
+        next_tokens_gpu = self.sampler.sample(logits[: batch.size], args)
         next_tokens_cpu = next_tokens_gpu.to("cpu", non_blocking=True)
         copy_done_event = torch.cuda.Event()
         copy_done_event.record(self.stream)
