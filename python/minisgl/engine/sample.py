@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List
 
 import torch
+from minisgl.distributed import DistributedCommunicator, DistributedInfo, get_tp_info
 from minisgl.utils import is_sm90_supported, nvtx_annotate
 
 if TYPE_CHECKING:
@@ -49,6 +50,8 @@ def sample_impl(
 class Sampler:
     device: torch.device
     vocab_size: int
+    tp_info: DistributedInfo = field(default_factory=get_tp_info)
+    comm: DistributedCommunicator = field(default_factory=DistributedCommunicator)
 
     def prepare(self, batch: Batch) -> BatchSamplingArgs:
         params = [r.sampling_params for r in batch.reqs]
@@ -67,9 +70,18 @@ class Sampler:
             top_p = make_device_tensor(top_ps, torch.float32, self.device)
         return BatchSamplingArgs(temperatures, top_k=top_k, top_p=top_p)
 
-    @nvtx_annotate("Sampler")
-    def sample(self, logits: torch.Tensor, args: BatchSamplingArgs) -> torch.Tensor:
+    def _sample(self, logits: torch.Tensor, args: BatchSamplingArgs) -> torch.Tensor:
         with torch.cuda.nvtx.range("Sampler"):
             if args.temperatures is None:  # greedy sampling
                 return torch.argmax(logits, dim=-1)
             return sample_impl(logits.float(), args.temperatures, args.top_k, args.top_p)
+
+    @nvtx_annotate("Sampler")
+    def sample(self, logits: torch.Tensor, args: BatchSamplingArgs) -> torch.Tensor:
+        if self.tp_info.rank == 0:
+            result = self._sample(logits, args).to(torch.int32)
+        else:
+            result = torch.empty((logits.size(0),), dtype=torch.int32, device=self.device)
+        if self.tp_info.size > 1:
+            self.comm.broadcast(result, root=0)
+        return result
