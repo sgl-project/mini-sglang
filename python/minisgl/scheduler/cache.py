@@ -9,6 +9,7 @@ from minisgl.kvcache import BaseCacheHandle, MatchResult, create_prefix_cache
 from minisgl.utils import div_ceil
 
 if TYPE_CHECKING:
+    from .config import SchedulerConfig
     from .utils import PendingReq
 
 
@@ -16,21 +17,20 @@ HICACHE_LOAD_LENGTH_THRESHOLD = 16
 
 
 class CacheManager:
-    def __init__(self, num_pages: int, page_size: int, page_table: torch.Tensor, type: str):
+    def __init__(self, num_pages: int, page_table: torch.Tensor, config: SchedulerConfig):
         # The `_free_slots` follows a page-aligned manner. For example, if page_size = 2,
         # the `_free_slots` may look like [0, 2, 4, 6, ...], and each slot represents a page.
-        device = page_table.device
-        self._free_slots = torch.arange(num_pages, dtype=torch.int32, device=device) * page_size
-        self._prefix_cache = create_prefix_cache(device=device, type=type)
-        self.device = device
-        self.num_pages = num_pages
         self.page_table = page_table
-        self.page_size = page_size
-        self.enable_hicache = type == "hiradix"
+        self.page_size = page_size = config.page_size
+        self.device = device = page_table.device
+        self.num_pages = num_pages
+        self.enable_hicache = config.cache_type == "hiradix"
+        self._free_slots = torch.arange(num_pages, dtype=torch.int32, device=device) * page_size
+        self._prefix_cache = create_prefix_cache(device=device, type=config.cache_type)
         if self.enable_hicache:
             from minisgl.hicache import HiCacheController
 
-            self._hicache_controller = HiCacheController(self._prefix_cache, num_pages)
+            self._hicache_controller = HiCacheController(self._prefix_cache, num_pages, config)
             self.start_load_host = self._hicache_controller.start_load
             self.refresh_hicache = self._hicache_controller.refresh
 
