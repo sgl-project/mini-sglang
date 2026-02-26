@@ -36,6 +36,15 @@ class BaseKVCachePool(ABC):
     @abstractmethod
     def num_layers(self) -> int: ...
 
+    @abstractmethod
+    def set_hicache_counter(self, counter) -> None: ...
+
+    @abstractmethod
+    def create_host_memory_pool(self, num_pages: int) -> BaseKVCachePool: ...
+
+    @abstractmethod
+    def get_per_token_bytes(self) -> int: ...
+
 
 @dataclass(frozen=True)
 class BaseCacheHandle(ABC):
@@ -61,7 +70,7 @@ class InsertResult(NamedTuple):
 
 class MatchResult(NamedTuple):
     cuda_handle: BaseCacheHandle
-    # TODO: support HiCache
+    host_handle: BaseCacheHandle | None = None
 
 
 class BasePrefixCache(ABC):
