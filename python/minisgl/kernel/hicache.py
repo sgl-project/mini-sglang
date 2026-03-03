@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 from typing import TYPE_CHECKING
 
-from .utils import load_jit, make_cpp_args
+from .utils import load_aot, load_jit, make_cpp_args
 
 if TYPE_CHECKING:
     import torch
@@ -31,13 +31,48 @@ def _jit_hicache_module(*, element_size: int, unroll: int, block_quota: int) -> 
     )
 
 
+@functools.cache
+def _jit_numa_module() -> Module:
+    return load_aot("numa", cuda_files=["numa.cu"], extra_ldflags=["-lnuma"])
+
+
+@functools.cache
+def probe_numa_node() -> int:
+    import subprocess
+
+    import torch
+
+    gpu_index = torch.cuda.current_device()
+    target_gpu = f"GPU{gpu_index}"
+    topo_output = subprocess.check_output(
+        ["nvidia-smi", "topo", "-m"],
+        text=True,
+    )
+    topo_output = topo_output.splitlines()
+    # Find header to determine NUMA Affinity column index
+    header = topo_output[0].split()
+    try:
+        numa_col_idx = header.index("NUMA")  # header contains: NUMA Affinity
+    except ValueError:
+        raise RuntimeError("NUMA Affinity column not found in topo output")
+    # Data rows start after header
+    for line in topo_output[1:]:
+        cols = line.split()
+        if not cols:
+            continue
+        if cols[0] == target_gpu:
+            numa_value = cols[numa_col_idx]
+            if numa_value == "N/A":
+                raise RuntimeError("NUMA Affinity is N/A on this system")
+            return int(numa_value)
+    raise RuntimeError(f"{target_gpu} not found in topo output")
+
+
 def _default_unroll(element_size: int) -> int:
     if element_size <= 512:
         return 4
-
     if element_size <= 1024:
         return 2
-
     # fallback: no unroll
     return 1
 
@@ -112,3 +147,17 @@ def transfer_hicache_all_layer(
         kv_cache_src_stride_bytes,
         kv_cache_dst_stride_bytes,
     )
+
+
+def allocate_host(*shape: int, dtype: torch.dtype) -> torch.Tensor:
+    import torch
+
+    try:
+        numa_node = probe_numa_node()
+        module = _jit_numa_module()
+    except Exception:
+        return torch.empty(*shape, dtype=dtype, pin_memory=True)
+    size_bytes = functools.reduce(lambda x, y: x * y, shape) * dtype.itemsize
+    result = torch.from_dlpack(module.allocate_numa(size_bytes, numa_node))
+    assert result.is_pinned(), "Expected pinned memory from NUMA allocator"
+    return result.view(dtype).view(*shape)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, Tuple
 
 import torch
 
@@ -18,6 +18,9 @@ class BaseKVCachePool(ABC):
 
     @abstractmethod
     def v_cache(self, index: int) -> torch.Tensor: ...
+
+    @abstractmethod
+    def get_kv_storage(self) -> Tuple[torch.Tensor, torch.Tensor]: ...
 
     @abstractmethod
     def store_kv(
@@ -36,11 +39,11 @@ class BaseKVCachePool(ABC):
     @abstractmethod
     def num_layers(self) -> int: ...
 
-    @abstractmethod
-    def set_hicache_counter(self, counter) -> None: ...
+    def set_hicache_counter(self, counter) -> None:
+        raise NotImplementedError("HiCache is not supported by this KV cache pool.")
 
     @abstractmethod
-    def create_host_memory_pool(self, num_pages: int) -> BaseKVCachePool: ...
+    def create_host_pool(self, num_pages: int, layout: str) -> BaseKVCachePool: ...
 
     @abstractmethod
     def get_per_token_bytes(self) -> int: ...

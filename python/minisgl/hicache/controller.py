@@ -30,7 +30,7 @@ class HiCacheCounter:
 
     def wait(self, layer_id: int) -> None:
         current_stream = torch.cuda.current_stream()
-        self.events[layer_id].wait(current_stream)
+        current_stream.wait_event(self.events[layer_id])
 
 
 class Transaction(NamedTuple):
@@ -47,12 +47,67 @@ class Ack(NamedTuple):
     finish_event: torch.Event
 
 
-RING_BUFFER_SIZE = 3
+RING_SIZE = 3  # 3 is enough and safe
 WRITE_LENGTH_THRESHOLD = 64
 RESET_ACK_THRESHOLD = 512
 
 
-class HiCacheController:
+class HiCacheTransferMixin:
+    def __init__(
+        self,
+        cuda_kv: List[torch.Tensor],
+        host_kv: List[torch.Tensor],
+        config: SchedulerConfig,
+    ) -> None:
+        self.load_stream = torch.cuda.Stream()
+        self.write_stream = torch.cuda.Stream()
+        self.load_stream_ctx = torch.cuda.stream(self.load_stream)
+        self.write_stream_ctx = torch.cuda.stream(self.write_stream)
+        self.num_layers, _, _, num_kv_heads, head_dim = cuda_kv[0].shape
+        self.device = cuda_kv[0].device
+        item_bytes = cuda_kv[0].element_size()
+        storage_shape = (-1, num_kv_heads * head_dim)
+        # 2D list of tensors with shape [num_tokens, num_kv_heads * head_dim]
+        self._cuda_kv = [[t.view(storage_shape) for t in kv] for kv in cuda_kv]
+        self._host_kv = [[t.view(storage_shape) for t in kv] for kv in host_kv]
+        del cuda_kv, host_kv  # free original references to avoid confusion
+        self._cuda_stride_bytes = self._cuda_kv[0][0].stride(0) * item_bytes
+        self._host_stride_bytes = self._host_kv[0][0].stride(0) * item_bytes
+        self._element_bytes = self._cuda_kv[0][0].shape[-1] * item_bytes
+        self._cuda_k_ptrs = _make_ptrs(self._cuda_kv[0], self.device)
+        self._cuda_v_ptrs = _make_ptrs(self._cuda_kv[1], self.device)
+        self._host_k_ptrs = _make_ptrs(self._host_kv[0], self.device)
+        self._host_v_ptrs = _make_ptrs(self._host_kv[1], self.device)
+
+    def load_one(self, host_indices: torch.Tensor, cuda_indices: torch.Tensor, i: int) -> None:
+        from minisgl.kernel import transfer_hicache_one_layer
+
+        transfer_hicache_one_layer(
+            k_cache_dst=self._cuda_kv[0][i],
+            v_cache_dst=self._cuda_kv[1][i],
+            indices_dst=cuda_indices,
+            k_cache_src=self._host_kv[0][i],
+            v_cache_src=self._host_kv[1][i],
+            indices_src=host_indices,
+        )
+
+    def store_all(self, host_indices: torch.Tensor, cuda_indices: torch.Tensor) -> None:
+        from minisgl.kernel import transfer_hicache_all_layer
+
+        transfer_hicache_all_layer(
+            k_ptr_dst=self._host_k_ptrs,
+            v_ptr_dst=self._host_v_ptrs,
+            indices_dst=host_indices,
+            k_ptr_src=self._cuda_k_ptrs,
+            v_ptr_src=self._cuda_v_ptrs,
+            indices_src=cuda_indices,
+            kv_cache_dst_stride_bytes=self._host_stride_bytes,
+            kv_cache_src_stride_bytes=self._cuda_stride_bytes,
+            element_size=self._element_bytes,
+        )
+
+
+class HiCacheController(HiCacheTransferMixin):
     def __init__(self, prefix_cache: BasePrefixCache, num_pages: int, config: SchedulerConfig):
         self.hiradix_cache = cast("HiRadixPrefixCache", prefix_cache)
         self.load_queue: List[Transaction] = []
@@ -60,49 +115,27 @@ class HiCacheController:
         self.ack_load_queue: List[Ack] = []
         self.ack_write_queue: List[Ack] = []
         self.ack_cnt = 0
-        self.load_stream = torch.cuda.Stream()
-        self.write_stream = torch.cuda.Stream()
-        self.load_stream_ctx = torch.cuda.stream(self.load_stream)
-        self.write_stream_ctx = torch.cuda.stream(self.write_stream)
-        self.kvcache = get_global_ctx().kv_cache
-        self.counter_ring_buffer = [
-            HiCacheCounter(self.kvcache.num_layers) for _ in range(RING_BUFFER_SIZE)
-        ]
+        self.cuda_pool = get_global_ctx().kv_cache
+        self.num_layers = self.cuda_pool.num_layers
         self.ring_index = 0
-        self.device = self.hiradix_cache.device
+        self.counter_ring_buffer = [HiCacheCounter(self.num_layers) for _ in range(RING_SIZE)]
+        self.token_bytes = self.cuda_pool.get_per_token_bytes()
         num_host_pages = int(num_pages * config.hicache_ratio)
         num_host_tokens = num_host_pages * config.page_size
-        self.token_bytes = self.kvcache.get_per_token_bytes()
         total_bytes_gb = num_host_tokens * self.token_bytes / (1024**3)
         self.free_slots = torch.arange(num_host_tokens, dtype=torch.int32, device="cpu")
         logger.info(
             f"Allocating {num_host_tokens} tokens "
             f"({total_bytes_gb:.2f} GB) for host memory pool"
         )
-        self.host_kvcache = self.kvcache.create_host_memory_pool(num_host_pages)
-        # DATA plane kernel args
-        self.k_cache_ptrs = _make_ptrs(
-            [self.kvcache.k_cache(i) for i in range(self.kvcache.num_layers)],
-            device=self.device,
+        self.host_pool = self.cuda_pool.create_host_pool(num_host_pages, config.host_mem_layout)
+
+        # tuple of kv, shape [num_layers, num_pages, num_kv_heads, head_dim]
+        super().__init__(
+            cuda_kv=list(self.cuda_pool.get_kv_storage()),
+            host_kv=list(self.host_pool.get_kv_storage()),
+            config=config,
         )
-        self.v_cache_ptrs = _make_ptrs(
-            [self.kvcache.v_cache(i) for i in range(self.kvcache.num_layers)],
-            device=self.device,
-        )
-        self.host_k_cache_ptrs = _make_ptrs(
-            [self.host_kvcache.k_cache(i) for i in range(self.kvcache.num_layers)],
-            device=self.device,
-        )
-        self.host_v_cache_ptrs = _make_ptrs(
-            [self.host_kvcache.v_cache(i) for i in range(self.kvcache.num_layers)],
-            device=self.device,
-        )
-        local_kv_heads, head_dim = self.kvcache.k_cache(0).shape[-2:]
-        self.storage_shape = (-1, local_kv_heads * head_dim)
-        item_bytes = self.kvcache.dtype.itemsize
-        self.element_size = local_kv_heads * head_dim * item_bytes
-        self.stride_bytes = self.kvcache.k_cache(0).stride(-2) * item_bytes
-        self.host_stride_bytes = self.host_kvcache.k_cache(0).stride(-2) * item_bytes
 
     def prepare_load(
         self,
@@ -130,27 +163,18 @@ class HiCacheController:
 
     def start_load(self) -> None:
         if not self.load_queue:
-            return self.kvcache.set_hicache_counter(None)
-        from minisgl.kernel import transfer_hicache_one_layer
-
-        self.ring_index = (self.ring_index + 1) % RING_BUFFER_SIZE
+            return self.cuda_pool.set_hicache_counter(None)
+        self.ring_index = (self.ring_index + 1) % RING_SIZE
         counter = self.counter_ring_buffer[self.ring_index]
-        self.kvcache.set_hicache_counter(counter)
+        self.cuda_pool.set_hicache_counter(counter)
         host_indices, cuda_indices = self._merge_transactions(self.load_queue)
         num_tokens = len(host_indices)
         current_stream = torch.cuda.current_stream()
         counter.start_event.record(self.load_stream)
         with self.load_stream_ctx:
             self.load_stream.wait_stream(current_stream)
-            for i in range(self.kvcache.num_layers):
-                transfer_hicache_one_layer(
-                    k_cache_dst=self.kvcache.k_cache(i).view(self.storage_shape),
-                    v_cache_dst=self.kvcache.v_cache(i).view(self.storage_shape),
-                    indices_dst=cuda_indices,
-                    k_cache_src=self.host_kvcache.k_cache(i).view(self.storage_shape),
-                    v_cache_src=self.host_kvcache.v_cache(i).view(self.storage_shape),
-                    indices_src=host_indices,
-                )
+            for i in range(self.num_layers):
+                self.load_one(host_indices, cuda_indices, i)
                 counter.events[i].record(self.load_stream)
             finish_event = counter.events[-1]
 
@@ -165,8 +189,6 @@ class HiCacheController:
     def start_write(self) -> None:
         if not self.write_queue:
             return
-        from minisgl.kernel import transfer_hicache_all_layer
-
         handles = [tx.handle for tx in self.write_queue]
         host_indices, cuda_indices = self._merge_transactions(self.write_queue)
         num_tokens = len(host_indices)
@@ -177,17 +199,7 @@ class HiCacheController:
         with self.write_stream_ctx:
             self.write_stream.wait_stream(current_stream)
             # TODO: refactor this kernel
-            transfer_hicache_all_layer(
-                k_ptr_dst=self.host_k_cache_ptrs,
-                v_ptr_dst=self.host_v_cache_ptrs,
-                indices_dst=host_indices,
-                k_ptr_src=self.k_cache_ptrs,
-                v_ptr_src=self.v_cache_ptrs,
-                indices_src=cuda_indices,
-                kv_cache_src_stride_bytes=self.stride_bytes,
-                kv_cache_dst_stride_bytes=self.host_stride_bytes,
-                element_size=self.element_size,
-            )
+            self.store_all(host_indices, cuda_indices)
 
         # NOTE: must record stream to avoid use after free
         finish_event.record(self.write_stream)
@@ -245,7 +257,7 @@ class HiCacheController:
         return allocated
 
     def _allocate_counter(self) -> HiCacheCounter:
-        self.ring_index = (self.ring_index + 1) % RING_BUFFER_SIZE
+        self.ring_index = (self.ring_index + 1) % RING_SIZE
         return self.counter_ring_buffer[self.ring_index]
 
     def _allocate_ack_id(self) -> int:
