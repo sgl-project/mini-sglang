@@ -1,14 +1,12 @@
 import os
 import time
 
+import minisgl.kernel as kernel
 import pytest
 import torch
 from minisgl.distributed import set_tp_info
-import minisgl.kernel as kernel
-from tqdm import tqdm
-
 from minisgl.utils import init_logger
-
+from tqdm import tqdm
 
 logger = init_logger(__name__)
 

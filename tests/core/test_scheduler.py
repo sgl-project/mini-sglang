@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import multiprocessing as mp
 import os
+
 import pytest
 import torch
-import multiprocessing as mp
-from transformers import AutoTokenizer
-
+from minisgl.core import SamplingParams
 from minisgl.distributed import DistributedInfo
 from minisgl.message import BaseBackendMsg, BaseTokenizerMsg, DetokenizeMsg, ExitMsg, UserMsg
 from minisgl.scheduler import Scheduler, SchedulerConfig
 from minisgl.utils import ZmqPullQueue, ZmqPushQueue, init_logger
-from minisgl.core import SamplingParams
+from transformers import AutoTokenizer
 
 logger = init_logger(__name__)
 

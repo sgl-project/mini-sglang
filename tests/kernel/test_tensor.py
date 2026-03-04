@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import pytest
 import minisgl.kernel as kernel
+import pytest
 import torch
 
 

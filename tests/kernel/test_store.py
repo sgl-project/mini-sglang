@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from minisgl.benchmark.perf import compare_memory_kernel_perf
 import torch
+from minisgl.benchmark.perf import compare_memory_kernel_perf
 from minisgl.kernel import store_cache
 
 

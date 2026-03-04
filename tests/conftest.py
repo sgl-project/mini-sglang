@@ -3,7 +3,6 @@ pytest configuration for mini-sglang tests.
 """
 
 import pytest
-import torch
 
 
 def pytest_addoption(parser):
