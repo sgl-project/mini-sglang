@@ -1,8 +1,6 @@
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Dict
-
 from transformers import PretrainedConfig
 
 
@@ -41,6 +39,13 @@ class ModelConfig:
 
     @classmethod
     def from_hf(cls, config: PretrainedConfig) -> ModelConfig:
+        if hasattr(config, "text_config") and config.text_config is not None:
+            top = config
+            config = config.text_config
+            for attr in ("architectures", "rope_theta", "rope_scaling"):
+                if not getattr(config, attr, None) and getattr(top, attr, None):
+                    setattr(config, attr, getattr(top, attr))
+
         num_kv_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         tie_word_embeddings = getattr(config, "tie_word_embeddings", False)
@@ -50,6 +55,10 @@ class ModelConfig:
         moe_intermediate_size = getattr(config, "moe_intermediate_size", 0)
         norm_topk_prob = getattr(config, "norm_topk_prob", False)
         architectures = getattr(config, "architectures", ["LlamaForCausalLM"])
+
+        # Llama/Qwen: rope_theta is a direct attr; Mistral: it's inside rope_scaling dict
+        rope_scaling = getattr(config, "rope_scaling", None)
+        rope_theta = getattr(config, "rope_theta", None) or rope_scaling["rope_theta"]
 
         return cls(
             num_layers=config.num_hidden_layers,
@@ -66,8 +75,8 @@ class ModelConfig:
                 head_dim=head_dim,
                 rotary_dim=head_dim,
                 max_position=config.max_position_embeddings,
-                base=config.rope_theta,
-                scaling=getattr(config, "rope_scaling", None),
+                base=rope_theta,
+                scaling=rope_scaling,
             ),
             num_experts=num_experts,
             num_experts_per_tok=num_experts_per_tok,

@@ -71,6 +71,10 @@ def _merge_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Te
 def load_weight(model_path: str, device: torch.device) -> Dict[str, torch.Tensor]:
     model_folder = download_hf_weight(model_path)
     files = glob.glob(f"{model_folder}/*.safetensors")
+
+    # Prefer HF-format shards over Mistral-native consolidated format
+    files = [f for f in files if not f.endswith("consolidated.safetensors")] or files
+
     state_dict: Dict[str, torch.Tensor] = {}
 
     tp_info = get_tp_info()
@@ -80,7 +84,11 @@ def load_weight(model_path: str, device: torch.device) -> Dict[str, torch.Tensor
     for file in tqdm(sorted(files), desc="Loading weights", disable=disable_tqdm):
         with safetensors.safe_open(file, framework="pt", device=device_str) as f:
             for name in f.keys():
-                state_dict[name] = f.get_tensor(name)
+                # Strip multimodal wrapper prefix, skip vision/projector weights
+                if name.startswith(("vision_tower.", "multi_modal_projector.")):
+                    continue
+                key = name.removeprefix("language_model.")
+                state_dict[key] = f.get_tensor(name)
 
     if tp_info.size > 1:
         state_dict = _shard_state_dict(state_dict)
