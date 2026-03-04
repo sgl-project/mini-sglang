@@ -5,9 +5,9 @@ from typing import Dict
 
 import safetensors
 import torch
-from tqdm import tqdm
 from minisgl.distributed import get_tp_info
 from minisgl.utils import div_ceil, download_hf_weight
+from tqdm import tqdm
 
 
 def _shard_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:

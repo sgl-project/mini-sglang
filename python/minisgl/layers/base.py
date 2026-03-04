@@ -11,9 +11,7 @@ _STATE_DICT: TypeAlias = Dict[str, torch.Tensor]
 _EXPERT_KEY_SUFFIXES = ("", ".weight", ".bias")
 
 
-def _collect_expert_keys(
-    state_dict: _STATE_DICT, prefix: str, param_name: str
-) -> List[str]:
+def _collect_expert_keys(state_dict: _STATE_DICT, prefix: str, param_name: str) -> List[str]:
     """Collect expert weight keys in O(num_experts) via direct dict lookup."""
     keys: List[str] = []
     idx = 0
