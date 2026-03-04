@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import glob
-from typing import Dict
+from typing import Dict, Iterator, Tuple
 
 import safetensors
 import torch
@@ -9,80 +9,80 @@ from tqdm import tqdm
 from minisgl.distributed import get_tp_info
 from minisgl.utils import div_ceil, download_hf_weight
 
+_SPLIT_DIM_0 = [".q_proj", ".k_proj", ".v_proj", ".gate_proj", ".up_proj"]
+_SPLIT_DIM_1 = [".o_proj", ".down_proj"]
 
-def _shard_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-    shard_state_dict: Dict[str, torch.Tensor] = {}
-    tp_info = get_tp_info()
-    r = tp_info.rank
-    n = tp_info.size
-    SPLIT_DIM_0_LIST = [
-        ".q_proj",
-        ".k_proj",
-        ".v_proj",
-        ".gate_proj",
-        ".up_proj",
-    ]
-    SPLIT_DIM_1_LIST = [
-        ".o_proj",
-        ".down_proj",
-    ]
-    for key, value in state_dict.items():
-        if any(key.count(sub) for sub in SPLIT_DIM_0_LIST):
-            shard_state_dict[key] = value.chunk(n, dim=0)[r]
-        elif any(key.count(sub) for sub in SPLIT_DIM_1_LIST):
-            shard_state_dict[key] = value.chunk(n, dim=1)[r]
-        elif key.count("lm_head") or key.count("embed_tokens"):
-            num_embeddings = value.shape[0]
-            num_embeddings_per_partition = div_ceil(num_embeddings, n)
-            vocab_start_idx = r * num_embeddings_per_partition
-            vocab_end_idx = min((r + 1) * num_embeddings_per_partition, num_embeddings)
-            shard_state_dict[key] = value[vocab_start_idx:vocab_end_idx, :]
-        else:
-            shard_state_dict[key] = value
-    return shard_state_dict
+# Merge groups: individual projections -> fused projection
+_MERGE_GROUPS = {
+    ".q_proj": (".qkv_proj", ("q", "k", "v")),
+    ".k_proj": (".qkv_proj", ("q", "k", "v")),
+    ".v_proj": (".qkv_proj", ("q", "k", "v")),
+    ".gate_proj": (".gate_up_proj", ("gate", "up")),
+    ".up_proj": (".gate_up_proj", ("gate", "up")),
+}
+_SLOT_NAMES = {
+    ".q_proj": "q", ".k_proj": "k", ".v_proj": "v",
+    ".gate_proj": "gate", ".up_proj": "up",
+}
 
 
-def _merge_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-    filtered_state_dict: Dict[str, torch.Tensor] = {}
-    for key in list(state_dict.keys()):
-        if key.count(".q_proj"):
-            q_proj = state_dict[key]
-            k_proj = state_dict[key.replace(".q_proj", ".k_proj")]
-            v_proj = state_dict[key.replace(".q_proj", ".v_proj")]
-            new_key = key.replace(".q_proj", ".qkv_proj")
-            filtered_state_dict[new_key] = torch.cat([q_proj, k_proj, v_proj], dim=0)
-            del state_dict[key]
-            del state_dict[key.replace(".q_proj", ".k_proj")]
-            del state_dict[key.replace(".q_proj", ".v_proj")]
-        elif key.count(".gate_proj"):
-            gate_proj = state_dict[key]
-            up_proj = state_dict[key.replace(".gate_proj", ".up_proj")]
-            new_key = key.replace(".gate_proj", ".gate_up_proj")
-            filtered_state_dict[new_key] = torch.cat([gate_proj, up_proj], dim=0)
-            del state_dict[key]
-            del state_dict[key.replace(".gate_proj", ".up_proj")]
-        elif key.count(".k_proj") or key.count(".v_proj") or key.count("up_proj"):
-            continue
-        else:
-            filtered_state_dict[key] = state_dict[key]
-    return filtered_state_dict
+def _shard_tensor(key: str, value: torch.Tensor, r: int, n: int) -> torch.Tensor:
+    """Extract rank r's shard from a single tensor. Returns a contiguous copy."""
+    if any(key.count(sub) for sub in _SPLIT_DIM_0):
+        return value.chunk(n, dim=0)[r].clone()
+    elif any(key.count(sub) for sub in _SPLIT_DIM_1):
+        return value.chunk(n, dim=1)[r].clone()
+    elif key.count("lm_head") or key.count("embed_tokens"):
+        num_embeddings = value.shape[0]
+        num_embeddings_per_partition = div_ceil(num_embeddings, n)
+        vocab_start_idx = r * num_embeddings_per_partition
+        vocab_end_idx = min((r + 1) * num_embeddings_per_partition, num_embeddings)
+        return value[vocab_start_idx:vocab_end_idx, :].clone()
+    else:
+        return value
 
 
-def load_weight(model_path: str, device: torch.device) -> Dict[str, torch.Tensor]:
+def _get_merge_info(key: str):
+    """If key belongs to a merge group, return (merged_key, slot, all_slots). Else None."""
+    for suffix, (fused_suffix, slots) in _MERGE_GROUPS.items():
+        if key.count(suffix):
+            return key.replace(suffix, fused_suffix), _SLOT_NAMES[suffix], slots
+    return None
+
+
+def load_weight(model_path: str, device: torch.device) -> Iterator[Tuple[str, torch.Tensor]]:
+    """Streaming weight loader. Yields (name, tensor) pairs already sharded, merged,
+    and on device. Peak CPU memory: one full tensor + a small merge buffer."""
     model_folder = download_hf_weight(model_path)
-    files = glob.glob(f"{model_folder}/*.safetensors")
-    state_dict: Dict[str, torch.Tensor] = {}
+    files = sorted(glob.glob(f"{model_folder}/*.safetensors"))
 
     tp_info = get_tp_info()
-    disable_tqdm = (tp_info.rank != 0) if tp_info.size > 1 else False
+    r, n = tp_info.rank, tp_info.size
+    tp = n > 1
+    disable_tqdm = (r != 0) if tp else False
     device_str = str(device)
 
-    for file in tqdm(sorted(files), desc="Loading weights", disable=disable_tqdm):
-        with safetensors.safe_open(file, framework="pt", device=device_str) as f:
+    # Buffer for merge groups: merged_key -> {slot: tensor}
+    merge_buf: Dict[str, Dict[str, torch.Tensor]] = {}
+
+    for file in tqdm(files, desc="Loading weights", disable=disable_tqdm):
+        load_device = "cpu" if tp else device_str
+        with safetensors.safe_open(file, framework="pt", device=load_device) as f:
             for name in f.keys():
-                state_dict[name] = f.get_tensor(name)
+                raw = f.get_tensor(name)
+                tensor = _shard_tensor(name, raw, r, n).to(device) if tp else raw
+                del raw
 
-    if tp_info.size > 1:
-        state_dict = _shard_state_dict(state_dict)
+                info = _get_merge_info(name)
+                if info is None:
+                    yield name, tensor
+                    continue
 
-    return _merge_state_dict(state_dict)
+                merged_key, slot, all_slots = info
+                merge_buf.setdefault(merged_key, {})[slot] = tensor
+                if all(s in merge_buf[merged_key] for s in all_slots):
+                    parts = [merge_buf[merged_key][s] for s in all_slots]
+                    del merge_buf[merged_key]
+                    yield merged_key, torch.cat(parts, dim=0)
+
+    assert not merge_buf, f"Incomplete merge groups in checkpoint: {list(merge_buf.keys())}"
