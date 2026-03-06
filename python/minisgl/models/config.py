@@ -30,6 +30,11 @@ class ModelConfig:
     num_experts_per_tok: int
     moe_intermediate_size: int
     norm_topk_prob: bool
+    use_qk_norm: bool
+    interleave_moe_layer_step: int
+    attn_temperature_tuning: bool
+    floor_scale: int
+    attn_scale: float
     model_type: str
     architectures: list[str]
 
@@ -59,6 +64,12 @@ class ModelConfig:
         # Llama/Qwen: rope_theta is a direct attr; Mistral: it's inside rope_scaling dict
         rope_scaling = getattr(config, "rope_scaling", None)
         rope_theta = getattr(config, "rope_theta", None) or rope_scaling["rope_theta"]
+        # Llama 4 Only
+        use_qk_norm = getattr(config, "use_qk_norm", False)
+        interleave_moe_layer_step = getattr(config, "interleave_moe_layer_step", 1)
+        attn_temperature_tuning = getattr(config, "attn_temperature_tuning", False)
+        floor_scale = getattr(config, "floor_scale", 8192)
+        attn_scale = getattr(config, "attn_scale", 0.1)
 
         return cls(
             num_layers=config.num_hidden_layers,
@@ -84,4 +95,9 @@ class ModelConfig:
             norm_topk_prob=norm_topk_prob,
             model_type=model_type,
             architectures=architectures,
+            use_qk_norm=use_qk_norm,
+            interleave_moe_layer_step=interleave_moe_layer_step,
+            attn_temperature_tuning=attn_temperature_tuning,
+            floor_scale=floor_scale,
+            attn_scale=attn_scale,
         )

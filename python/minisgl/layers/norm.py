@@ -6,18 +6,22 @@ from .base import BaseOP
 
 
 class RMSNorm(BaseOP):
-    def __init__(self, size: int, eps: float) -> None:
+    def __init__(self, size: int, eps: float, has_weight: bool = True,) -> None:
         from flashinfer import rmsnorm
 
+        self.has_weight = has_weight
         self.eps = eps
-        self.weight = torch.empty(size)
+        # BaseOP.load_state_dict() doesn't load private attributes
+        self._weight = torch.ones(size)
+        if self.has_weight:
+            self.weight = self._weight
         self.rmsnorm = rmsnorm
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.rmsnorm(x, self.weight, self.eps)
+        return self.rmsnorm(x, self._weight, self.eps)
 
     def forward_inplace(self, x: torch.Tensor) -> None:
-        self.rmsnorm(x, self.weight, self.eps, out=x)
+        self.rmsnorm(x, self._weight, self.eps, out=x)
 
 
 class RMSNormFused(BaseOP):

@@ -1,5 +1,5 @@
 import functools
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Callable
 
 import torch
 from minisgl.moe import BaseMoeBackend
@@ -12,6 +12,8 @@ def fused_topk(
     topk: int,
     renormalize: bool,
     num_token_non_padded: torch.Tensor | None = None,
+    no_softmax: bool = False,
+    custom_routing_function: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     from sgl_kernel import topk_softmax
 
@@ -19,9 +21,14 @@ def fused_topk(
     M, _ = hidden_states.shape
     topk_weights = torch.empty(M, topk, dtype=torch.float32, device=hidden_states.device)
     topk_ids = torch.empty(M, topk, dtype=torch.int32, device=hidden_states.device)
-    topk_softmax(topk_weights, topk_ids, gating_output.float(), renormalize)
+    if no_softmax:
+        torch.topk(gating_output, topk, out=(topk_weights, topk_ids))
+    else:
+        topk_softmax(topk_weights, topk_ids, gating_output.float(), renormalize)
     if renormalize:
         topk_weights = topk_weights / (topk_weights.sum(dim=-1, keepdim=True) + 1e-8)
+    if custom_routing_function is not None:
+        topk_weights = custom_routing_function(topk_weights)
     if num_token_non_padded is not None:
         indices = torch.arange(0, topk_ids.shape[0], device=topk_ids.device)
         topk_ids[indices >= num_token_non_padded, :] = -1
@@ -238,12 +245,16 @@ class FusedMoe(BaseMoeBackend):
         renormalize: bool,
         activation: str = "silu",
         apply_router_weight_on_input: bool = False,
+        no_softmax: bool = False,
+        custom_routing_function: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> torch.Tensor:
         topk_weights, topk_ids = fused_topk(
             hidden_states=hidden_states,
             gating_output=gating_output,
             topk=topk,
             renormalize=renormalize,
+            no_softmax=no_softmax,
+            custom_routing_function=custom_routing_function,
         )
         return fused_experts_impl(
             hidden_states,

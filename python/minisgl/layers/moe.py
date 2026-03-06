@@ -3,6 +3,8 @@ from minisgl.core import get_global_ctx
 from minisgl.distributed import DistributedCommunicator, get_tp_info
 from minisgl.utils import div_even
 
+from typing import Callable
+
 from .base import BaseOP
 
 
@@ -16,6 +18,8 @@ class MoELayer(BaseOP):
         renormalize: bool = True,
         activation: str = "silu",
         apply_router_weight_on_input: bool = False,
+        topk_no_softmax: bool = False,
+        custom_routing_function: Callable[[torch.Tensor], torch.Tensor] | None = None
     ):
         super().__init__()
 
@@ -30,6 +34,8 @@ class MoELayer(BaseOP):
         self.renormalize = renormalize
         self.activation = activation
         self.apply_router_weight_on_input = apply_router_weight_on_input
+        self.topk_no_softmax = topk_no_softmax
+        self.custom_routing_function = custom_routing_function
         intermediate_size_per_partition = div_even(intermediate_size, tp_size)
         self.gate_up_proj = torch.empty(
             num_experts,
@@ -53,6 +59,8 @@ class MoELayer(BaseOP):
             renormalize=self.renormalize,
             activation=self.activation,
             apply_router_weight_on_input=self.apply_router_weight_on_input,
+            topk_no_softmax=self.topk_no_softmax,
+            custom_routing_function=self.custom_routing_function,
         )
         if self.tp_size > 1:
             final_hidden_states = self._comm.all_reduce(final_hidden_states)
