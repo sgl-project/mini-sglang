@@ -45,7 +45,7 @@ class Llama4MoE(BaseOP):
         self.router = LinearReplicated(
             config.hidden_size,
             config.num_experts,
-            bias=False,
+            has_bias=False,
         )
 
         def custom_routing_function(
