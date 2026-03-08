@@ -85,7 +85,7 @@ class Scheduler(SchedulerIOMixin):
         self.decode_manager.new_token_ratio = self.new_token_ratio
         self.decode_manager.min_new_token_ratio = self.min_new_token_ratio
         self.decode_manager.new_token_ratio_decay = self.new_token_ratio_decay
-        self.decode_manager.retract_decode_steps = self.retract_decode_steps
+        self.decode_manager.retract_decode_steps = self.retract_decode_steps # TODO(yzxiao): refactor code style about new_token_ratio
         # self.config = config
 
         # Initialize the I/O mixin
