@@ -47,7 +47,7 @@ class ModelConfig:
                     setattr(config, attr, getattr(top, attr))
 
         num_kv_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
-        head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+        head_dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
         tie_word_embeddings = getattr(config, "tie_word_embeddings", False)
         model_type = getattr(config, "model_type", "llama")
         num_experts = getattr(config, "num_local_experts", getattr(config, "num_experts", 0))
