@@ -5,9 +5,9 @@ from typing import Dict, Iterator, Tuple
 
 import safetensors
 import torch
-from tqdm import tqdm
 from minisgl.distributed import get_tp_info
 from minisgl.utils import div_ceil, download_hf_weight
+from tqdm import tqdm
 
 _SPLIT_DIM_0 = [".q_proj", ".k_proj", ".v_proj", ".gate_proj", ".up_proj"]
 _SPLIT_DIM_1 = [".o_proj", ".down_proj"]
