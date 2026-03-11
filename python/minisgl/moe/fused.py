@@ -22,7 +22,7 @@ def fused_topk(
     topk_weights = torch.empty(M, topk, dtype=torch.float32, device=hidden_states.device)
     topk_ids = torch.empty(M, topk, dtype=torch.int32, device=hidden_states.device)
     if no_softmax:
-        torch.topk(gating_output, topk, out=(topk_weights, topk_ids))
+        torch.topk(gating_output.float(), topk, out=(topk_weights, topk_ids.to(dtype=torch.long)))
     else:
         topk_softmax(topk_weights, topk_ids, gating_output.float(), renormalize)
     if renormalize:

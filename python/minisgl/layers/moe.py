@@ -59,7 +59,7 @@ class MoELayer(BaseOP):
             renormalize=self.renormalize,
             activation=self.activation,
             apply_router_weight_on_input=self.apply_router_weight_on_input,
-            topk_no_softmax=self.topk_no_softmax,
+            no_softmax=self.topk_no_softmax,
             custom_routing_function=self.custom_routing_function,
         )
         if self.tp_size > 1:
