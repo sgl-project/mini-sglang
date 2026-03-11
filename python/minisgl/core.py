@@ -28,6 +28,7 @@ class SamplingParams:
 @dataclass(eq=False)
 class Req:
     input_ids: torch.Tensor  # cpu tensor
+    prompt_len: int
     table_idx: int
     cached_len: int
     output_len: int
@@ -38,7 +39,9 @@ class Req:
     def __post_init__(self) -> None:
         assert self.input_ids.is_cpu
         self.device_len = len(self.input_ids)
-        self.max_device_len = len(self.input_ids) + self.output_len
+        self.max_device_len = (
+            max(self.device_len, self.prompt_len) + self.output_len
+        )  # NOTE: input_len(device_len) < prompt_len for chunked req
         assert 0 <= self.cached_len < self.device_len <= self.max_device_len
 
     @property
