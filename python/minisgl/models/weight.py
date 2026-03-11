@@ -29,9 +29,16 @@ _SLOT_NAMES = {
 }
 
 
-def _shard_tensor(key: str, value: torch.Tensor, r: int, n: int) -> torch.Tensor:
+def _shard_tensor(
+    key: str, value: torch.Tensor, r: int, n: int, num_kv_heads: int | None = None
+) -> torch.Tensor:
     """Extract rank r's shard from a single tensor. Returns a contiguous copy."""
     if any(key.count(sub) for sub in _SPLIT_DIM_0):
+        is_kv_proj = any(key.count(sub) for sub in (".k_proj", ".v_proj"))
+        if is_kv_proj and num_kv_heads is not None and num_kv_heads < n:
+            head_dim = value.shape[0] // num_kv_heads
+            head_idx = r * num_kv_heads // n
+            return value[head_idx * head_dim : (head_idx + 1) * head_dim].clone()
         return value.chunk(n, dim=0)[r].clone()
     elif any(key.count(sub) for sub in _SPLIT_DIM_1):
         return value.chunk(n, dim=1)[r].clone()
@@ -53,7 +60,9 @@ def _get_merge_info(key: str):
     return None
 
 
-def load_weight(model_path: str, device: torch.device) -> Iterator[Tuple[str, torch.Tensor]]:
+def load_weight(
+    model_path: str, device: torch.device, num_kv_heads: int | None = None
+) -> Iterator[Tuple[str, torch.Tensor]]:
     """Streaming weight loader. Yields (name, tensor) pairs already sharded, merged,
     and on device. Peak CPU memory: one full tensor + a small merge buffer."""
     model_folder = download_hf_weight(model_path)
@@ -70,7 +79,7 @@ def load_weight(model_path: str, device: torch.device) -> Iterator[Tuple[str, to
     merge_buf: Dict[str, Dict[str, torch.Tensor]] = {}
 
     for file in tqdm(files, desc="Loading weights", disable=disable_tqdm):
-        load_device = "cpu" if tp else device_str
+        load_device = device_str
         with safetensors.safe_open(file, framework="pt", device=load_device) as f:
             for name in f.keys():
                 # Strip multimodal wrapper prefix, skip vision/projector weights
@@ -78,7 +87,7 @@ def load_weight(model_path: str, device: torch.device) -> Iterator[Tuple[str, to
                     continue
                 raw = f.get_tensor(name)
                 name = name.removeprefix("language_model.")
-                tensor = _shard_tensor(name, raw, r, n).to(device) if tp else raw
+                tensor = _shard_tensor(name, raw, r, n, num_kv_heads=num_kv_heads)
                 del raw
 
                 info = _get_merge_info(name)

@@ -17,8 +17,11 @@ def call_if_main(name: str = "__main__", discard: bool | None = None):
             return lambda f: (f() and None) or f
 
 
-def div_even(a: int, b: int) -> int:
-    """Divides two integers"""
+def div_even(a: int, b: int, allow_replicate: bool = False) -> int:
+    """Divides two integers. If allow_replicate=True, allows b > a when b % a == 0, returning 1."""
+    if allow_replicate and b > a:
+        assert b % a == 0, f"{b = } must be divisible by {a = } for KV head replication"
+        return 1
     assert a % b == 0, f"{a = } must be divisible by {b = }"
     return a // b
 

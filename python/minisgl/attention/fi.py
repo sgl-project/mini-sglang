@@ -109,7 +109,7 @@ class FlashInferBackend(BaseAttnBackend):
         # initialize some data members
         tp_size = get_tp_info().size
         self.qo_head_local = div_even(self.config.num_qo_heads, tp_size)
-        self.kv_head_local = div_even(self.config.num_kv_heads, tp_size)
+        self.kv_head_local = div_even(self.config.num_kv_heads, tp_size, allow_replicate=True)
 
         self.cached_ones_cpu: torch.Tensor = torch.tensor([], dtype=torch.int32, pin_memory=True)
         # for cuda graph

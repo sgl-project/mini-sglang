@@ -143,14 +143,19 @@ class Engine:
                 for k, v in self.model.state_dict().items()
             }
         else:
-            return {k: v.to(self.dtype) for k, v in load_weight(config.model_path, self.device)}
+            return {
+                k: v.to(self.dtype)
+                for k, v in load_weight(
+                    config.model_path, self.device, num_kv_heads=config.model_config.num_kv_heads
+                )
+            }
 
     def _determine_num_pages(self, old_free_memory: int, config: EngineConfig) -> int:
         new_free_memory = self._sync_get_memory()[1]
         cache_per_page = (
             2  # key + value
             * config.model_config.head_dim
-            * div_even(config.model_config.num_kv_heads, config.tp_info.size)
+            * div_even(config.model_config.num_kv_heads, config.tp_info.size, allow_replicate=True)
             * config.page_size
             * self.dtype.itemsize
             * config.model_config.num_layers
