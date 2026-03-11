@@ -42,6 +42,12 @@ def _shard_tensor(key: str, value: torch.Tensor, r: int, n: int, num_kv_heads: i
         return value.chunk(n, dim=0)[r].clone()
     elif any(key.count(sub) for sub in _SPLIT_DIM_1):
         return value.chunk(n, dim=1)[r].clone()
+    elif key.count(".gate_up_proj"):
+        # Only for Llama4, experts.gate_up_proj has a shape of (num_experts, hidden_size, 2*intermediate_size)
+        gate_proj, up_proj = value.chunk(2, dim=-1)
+        gate_proj_shard = gate_proj.chunk(n, dim=-1)[r]
+        up_proj_shard = up_proj.chunk(n, dim=-1)[r]
+        return torch.cat([gate_proj_shard, up_proj_shard], dim=-1)
     elif key.count("lm_head") or key.count("embed_tokens"):
         num_embeddings = value.shape[0]
         num_embeddings_per_partition = div_ceil(num_embeddings, n)
@@ -90,7 +96,7 @@ def load_weight(model_path: str, device: torch.device) -> Iterator[Tuple[str, to
         with safetensors.safe_open(file, framework="pt", device=str(device)) as f:
             for name in f.keys():
                 # Strip multimodal wrapper prefix, skip vision/projector weights
-                if name.startswith(("vision_tower.", "multi_modal_projector.")):
+                if name.startswith(("vision_model.", "multi_modal_projector.")):
                     continue
                 raw = f.get_tensor(name)
                 name = name.removeprefix("language_model.")

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Tuple
+from types import MethodType
+from typing import TYPE_CHECKING, Dict, Tuple
 
+from minisgl.distributed.info import get_tp_info
+from minisgl.utils.misc import div_even
 import torch
 from minisgl.core import get_global_ctx
 from minisgl.utils import nvtx_annotate
@@ -27,11 +30,14 @@ from minisgl.layers import (
 
 from .base import BaseLLMModel
 from .utils import MoEMLP as Qwen3MLP
-from .utils import GatedMLP as LlamaMLP
+from .utils import GatedMLP as Llama4MLP
 from .utils import RopeAttn as Llama4Attn
 
 if TYPE_CHECKING:
     from .config import ModelConfig
+
+def _concat_prefix(prefix: str, name: str) -> str:
+    return f"{prefix}.{name}" if prefix else name
 
 class Llama4MoE(BaseOP):
 
@@ -41,6 +47,7 @@ class Llama4MoE(BaseOP):
     ):
         super().__init__()
         self.top_k = config.num_experts_per_tok
+        self.num_experts = config.num_experts
         intermediate_size_moe = config.intermediate_size
         self.router = LinearReplicated(
             config.hidden_size,
@@ -64,7 +71,49 @@ class Llama4MoE(BaseOP):
             custom_routing_function=custom_routing_function,
         )
 
-        self.shared_expert = LlamaMLP(config=config)
+        def experts_load_state_dict(
+            self,
+            state_dict: Dict[str, torch.Tensor],
+            *,
+            prefix: str = "",
+            _internal: bool = False,
+        ) -> None:
+            for name, param in self.__dict__.items():
+                if name.startswith("_"):
+                    continue
+
+                if isinstance(param, torch.Tensor):
+                    item = state_dict.pop(_concat_prefix(prefix, name))
+                    assert isinstance(item, torch.Tensor)
+
+                    if hasattr(param, "post_process"):
+                        item = param.post_process(item)
+
+                    assert param.shape == item.shape and param.dtype == item.dtype
+                    setattr(self, name, item)
+                elif isinstance(param, BaseOP):
+                    param.load_state_dict(
+                        state_dict, prefix=_concat_prefix(prefix, name), _internal=True
+                    )
+
+            if not _internal and state_dict:
+                raise RuntimeError(f"Unexpected keys in state_dict: {list(state_dict.keys())}")
+
+        self.experts.load_state_dict = MethodType(experts_load_state_dict, self.experts)
+
+        tp_info = get_tp_info()
+        intermediate_size_per_partition = div_even(intermediate_size_moe, tp_info.size)
+        def gate_up_proj_post_process(weight: torch.Tensor) -> torch.Tensor:
+            assert weight.shape == (self.experts.num_experts, self.experts.hidden_size, 2*intermediate_size_per_partition)
+            return weight.transpose(1, 2).contiguous()
+
+        def down_proj_post_process(weight: torch.Tensor) -> torch.Tensor:
+            assert weight.shape == (self.experts.num_experts, intermediate_size_per_partition, self.experts.hidden_size)
+            return weight.transpose(1, 2).contiguous()
+        setattr(self.experts.gate_up_proj, "post_process", gate_up_proj_post_process)
+        setattr(self.experts.down_proj, "post_process", down_proj_post_process)
+
+        self.shared_expert = Llama4MLP(config=config)
 
     def forward(
         self,
@@ -107,7 +156,7 @@ class Llama4DecoderLayer(BaseOP):
         if self.is_moe_layer:
             self.feed_forward = Llama4MoE(config)
         else:
-            self.feed_forward = LlamaMLP(config)
+            self.feed_forward = Llama4MLP(config)
         self.input_layernorm = RMSNormFused(
             size=config.hidden_size,
             eps=config.rms_norm_eps,
