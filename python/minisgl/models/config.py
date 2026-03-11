@@ -41,7 +41,7 @@ class ModelConfig:
 
     @property
     def is_moe(self) -> bool:
-        return "moe" in self.model_type
+        return self.num_experts > 0 and self.num_experts_per_tok > 0
 
     @classmethod
     def from_hf(cls, config: PretrainedConfig) -> ModelConfig:
