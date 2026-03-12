@@ -1,8 +1,8 @@
+import shutil
 import time
 import urllib.request
-import shutil
-from random import seed
 from pathlib import Path
+from random import seed
 
 import pyarrow.parquet as pq
 from minisgl.core import SamplingParams

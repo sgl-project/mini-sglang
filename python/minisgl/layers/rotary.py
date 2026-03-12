@@ -63,6 +63,9 @@ def _get_rope(
         return RotaryEmbedding(head_dim, rotary_dim, max_position, base)
     # need to test some cases:
     match rope_scaling["rope_type"]:
+        case "default":
+            return RotaryEmbedding(head_dim, rotary_dim, max_position, base)
+
         case "llama3":
             scaling_factor: float = rope_scaling["factor"]
             low_freq_factor: float = rope_scaling["low_freq_factor"]
@@ -84,6 +87,27 @@ def _get_rope(
                 smooth = torch.clamp(smooth, 0, 1)
                 factor = (1 - smooth) / scaling_factor + smooth
                 return factor * inv_freq
+
+            return RotaryEmbedding(head_dim, rotary_dim, max_position, base, post_process)
+
+        case "yarn":
+            factor: float = rope_scaling["factor"]
+            beta_fast: float = rope_scaling.get("beta_fast", 32.0)
+            beta_slow: float = rope_scaling.get("beta_slow", 1.0)
+            orig_max_pos: int = rope_scaling["original_max_position_embeddings"]
+
+            def _find_correction_dim(num_rotations: float) -> float:
+                return rotary_dim * math.log(orig_max_pos / (num_rotations * 2 * math.pi)) / (2 * math.log(base))
+
+            low = max(math.floor(_find_correction_dim(beta_fast)), 0)
+            high = min(math.ceil(_find_correction_dim(beta_slow)), rotary_dim // 2 - 1)
+
+            def post_process(inv_freq: torch.Tensor) -> torch.Tensor:
+                ramp = torch.clamp(
+                    (torch.arange(rotary_dim // 2, dtype=torch.float32) - low) / max(high - low, 1),
+                    0, 1,
+                )
+                return (inv_freq / factor) * ramp + inv_freq * (1 - ramp)
 
             return RotaryEmbedding(head_dim, rotary_dim, max_position, base, post_process)
 

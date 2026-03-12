@@ -194,7 +194,7 @@ class Engine:
         cache_per_page = (
             2  # key + value
             * config.model_config.head_dim
-            * div_even(config.model_config.num_kv_heads, config.tp_info.size)
+            * div_even(config.model_config.num_kv_heads, config.tp_info.size, allow_replicate=True)
             * config.page_size
             * self.dtype.itemsize
             * config.model_config.num_layers
