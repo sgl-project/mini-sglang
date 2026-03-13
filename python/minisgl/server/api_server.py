@@ -278,10 +278,41 @@ async def v1_completions(req: OpenAICompletionRequest, request: Request):
         )
     )
 
-    return StreamingResponse(
-        state.stream_with_cancellation(state.stream_chat_completions(uid), request, uid),
-        media_type="text/event-stream",
-    )
+    if req.stream:
+        return StreamingResponse(
+            state.stream_with_cancellation(state.stream_chat_completions(uid), request, uid),
+            media_type="text/event-stream",
+        )
+    else:
+        # Non-streaming response: collect all output and return as JSON
+        full_content = ""
+        async for ack in state.wait_for_ack(uid):
+            full_content += ack.incremental_output
+            if ack.finished:
+                break
+
+        response = {
+            "id": f"cmpl-{uid}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": req.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": full_content,
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": -1,  # TODO: track actual token counts
+                "completion_tokens": -1,
+                "total_tokens": -1,
+            },
+        }
+        return response
 
 
 @app.get("/v1/models")
