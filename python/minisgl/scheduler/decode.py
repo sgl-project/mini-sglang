@@ -53,9 +53,14 @@ class DecodeManager:
                 return req
         return None
 
-    def check_decode_mem(self, available_size: int) -> bool:
+    def check_decode_mem(self, available_size: int, steps: int = 1) -> bool:
         need = sum(
-            alloc_delta(req.cached_len, req.extend_len, self.page_size) for req in self.running_reqs
+            alloc_delta(
+                req.cached_len,
+                min(req.max_device_len - req.cached_len, steps),
+                self.page_size,
+            )
+            for req in self.running_reqs
         )
         return need <= available_size
 
@@ -85,7 +90,9 @@ class DecodeManager:
                 and prefill_manager.pending_list[insert_idx].chunked_req is not None
             ):
                 insert_idx += 1
-            while not self.check_decode_mem(self.cache_manager.available_size):
+            while not self.check_decode_mem(
+                self.cache_manager.available_size, steps=self.retract_decode_steps
+            ):
                 if len(self.running_reqs) == 1:
                     raise RuntimeError("decode OOM")
                 req = min(
