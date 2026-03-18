@@ -36,7 +36,7 @@ class ForwardInput(NamedTuple):
     batch: Batch
     sample_args: BatchSamplingArgs
     input_tuple: Indice2D  # (token_mapping, positions)
-    write_tuple: Indice2D  # (req_mapping, seq_lens or 0)
+    write_tuple: Indice2D  # (req_mapping, seq_lens or -1)
 
 
 ForwardData: TypeAlias = "Tuple[ForwardInput, ForwardOutput]"
