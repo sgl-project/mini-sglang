@@ -229,6 +229,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     parser.add_argument(
         "--reasoning-parser",
         dest="reasoning_parser",
+        nargs="?",
         const="auto",    # --reasoning-parser with no value → "auto"
         default=None,    # not given at all → None (disabled)
         metavar="MODEL_TYPE",
