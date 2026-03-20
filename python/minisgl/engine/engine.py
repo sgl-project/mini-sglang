@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 from typing import Any, Dict, NamedTuple, Tuple
 
@@ -49,7 +50,10 @@ class Engine:
         set_rope_device(self.device)
         with torch.device("meta"), torch_dtype(config.dtype):
             self.model = create_model(config.model_config)
+        t0 = time.perf_counter()
         self.model.load_state_dict(self._load_weight_state_dict(config))
+        load_time = time.perf_counter() - t0
+        logger.info_rank0(f"Model weights loaded in {load_time:.2f}s")
 
         # ======================= KV cache initialization ========================
         self.num_pages = self._determine_num_pages(init_free_memory, config)
