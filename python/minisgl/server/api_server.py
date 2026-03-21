@@ -55,6 +55,7 @@ class GenerateRequest(BaseModel):
     prompt: str
     max_tokens: int
     ignore_eos: bool = False
+    profile: bool = False
 
 
 class Message(BaseModel):
@@ -82,6 +83,7 @@ class OpenAICompletionRequest(BaseModel):
     frequency_penalty: float = 0.0
 
     ignore_eos: bool = False
+    profile: bool = False
 
 
 class ModelCard(BaseModel):
@@ -239,6 +241,7 @@ async def generate(req: GenerateRequest, request: Request):
                 ignore_eos=req.ignore_eos,
                 max_tokens=req.max_tokens,
             ),
+            profile=req.profile,
         )
     )
 
@@ -275,6 +278,7 @@ async def v1_completions(req: OpenAICompletionRequest, request: Request):
                 top_k=req.top_k,
                 top_p=req.top_p,
             ),
+            profile=req.profile,
         )
     )
 
@@ -308,6 +312,7 @@ async def shell_completion(req: OpenAICompletionRequest):
                 top_k=req.top_k,
                 top_p=req.top_p,
             ),
+            profile=req.profile,
         )
     )
 
