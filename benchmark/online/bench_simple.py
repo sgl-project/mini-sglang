@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import random
 import sys
@@ -18,6 +19,13 @@ logger = init_logger(__name__)
 
 
 async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Pass profile=true to the server (torch profiler trace under /tmp)",
+    )
+    args = parser.parse_args()
     try:
         random.seed(42)  # reproducibility
 
@@ -46,7 +54,9 @@ async def main():
             try:
                 gen_task = asyncio.create_task(generate_task(max(TEST_BS)))
                 test_msg = generate_prompt(tokenizer, 100)
-                test_result = await benchmark_one(client, test_msg, 2, MODEL, pbar=False)
+                test_result = await benchmark_one(
+                    client, test_msg, 2, MODEL, pbar=False, profile=args.profile
+                )
                 if len(test_result.tics) <= 2:
                     logger.info("Server connection test failed")
                     return
@@ -64,7 +74,11 @@ async def main():
             for batch_size in TEST_BS:
                 try:
                     results = await benchmark_one_batch(
-                        client, msgs[:batch_size], output_lengths[:batch_size], MODEL
+                        client,
+                        msgs[:batch_size],
+                        output_lengths[:batch_size],
+                        MODEL,
+                        profile=args.profile,
                     )
                     process_benchmark_results(results)
                 except Exception as e:

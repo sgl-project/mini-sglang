@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, List, NamedTuple, NoReturn, Set, Tuple, TypeAlias
 
 import torch
@@ -70,10 +71,139 @@ class Scheduler(SchedulerIOMixin):
         self.eos_token_id = self.tokenizer.eos_token_id
         self.token_pool = self.table_manager.token_pool
         self.prefill_budget = config.max_extend_tokens
-        # self.config = config
 
-        # Initialize the I/O mixin
+        self._active_profile_uid: int | None = None
+        self._active_profiler = None
         super().__init__(config, self.engine.tp_cpu_group)
+
+    def _maybe_start_profiler(self, batch: Batch) -> None:
+        if self._active_profile_uid is not None:
+            return
+        profiled_uids = [r.uid for r in batch.reqs if getattr(r, "profile", False)]
+        if not profiled_uids:
+            return
+
+        from minisgl.utils.profiler import RequestProfiler
+
+        uid = profiled_uids[0]
+        out_dir = os.environ.get("MINISGL_PROFILE_DIR", "/tmp")
+        self._active_profile_uid = uid
+        self._active_profiler = RequestProfiler(uid=uid, out_dir=out_dir)
+        self._active_profiler.start()
+        logger.warning_rank0("Torch profiler enabled for uid=%s", uid)
+
+    def _maybe_stop_profiler(self, finished_uid: int) -> None:
+        if self._active_profile_uid != finished_uid or self._active_profiler is None:
+            return
+        path = self._active_profiler.stop_and_export()
+        if path is None:
+            logger.error_rank0("Torch profiler export failed for uid=%s", finished_uid)
+        else:
+            logger.warning_rank0("Torch profiler trace written to %s", path)
+        self._active_profile_uid = None
+        self._active_profiler = None
+
+    def _process_last_data(
+        self, last_data: ForwardData | None, ongoing_data: ForwardData | None
+    ) -> None:
+        if last_data is None:
+            return
+        batch, (_, next_tokens_cpu, copy_done) = last_data[0].batch, last_data[1]
+        copy_done.synchronize()
+        reply = BatchTokenizerMsg(data=[])
+
+        max_seq_len = self.engine.max_seq_len
+        for i, req in enumerate(batch.reqs):
+            if req in self.finished_reqs or isinstance(req, ChunkedReq):
+                continue
+
+            next_token_id = next_tokens_cpu[i]
+            req.append_host(next_token_id.unsqueeze(0))
+            next_token = int(next_token_id.item())
+            finished = req.remain_len <= 0
+            if not req.sampling_params.ignore_eos:
+                finished |= next_token == self.eos_token_id
+            if req.device_len >= max_seq_len - 1:
+                finished = True
+                logger.warning_rank0(f"Request {req.uid} reached {max_seq_len = }, dropped.")
+            reply.data.append(DetokenizeMsg(uid=req.uid, next_token=next_token, finished=finished))
+
+            # free resources if the req is finished and not ongoing
+            if finished:
+                self.finished_reqs.add(req)
+                self.decode_manager.remove_req(req)
+                self._maybe_stop_profiler(req.uid)
+                logger.debug_rank0("Request %s is finished", req)
+
+        # free resources for finished but not ongoing reqs
+        ongoing_reqs = ongoing_data[0].batch.reqs if ongoing_data else []
+        for req in self.finished_reqs.difference(ongoing_reqs):
+            self.table_manager.free(req.table_idx)
+            self.cache_manager.free_and_cache_finished_req(
+                req.cache_handle,
+                req.host_ids[: req.cached_len],
+                self.page_table[req.table_idx, : req.cached_len],
+            )
+
+        # keep only ongoing reqs in the finished set
+        self.finished_reqs.intersection_update(ongoing_reqs)
+        self.send_result(reply)
+
+    def _process_one_msg(self, msg: BaseBackendMsg) -> None:
+        if isinstance(msg, BatchBackendMsg):
+            for msg in msg.data:
+                self._process_one_msg(msg)
+        elif isinstance(msg, ExitMsg):
+            raise KeyboardInterrupt
+        elif isinstance(msg, UserMsg):
+            logger.debug_rank0("Received user msg: %s", msg)
+            input_len, max_seq_len = len(msg.input_ids), self.engine.max_seq_len
+            if input_len >= max_seq_len:
+                return logger.warning_rank0(
+                    f"Input sequence len {input_len} exceeds {max_seq_len}, "
+                    f"request {msg.uid} is dropped."
+                )
+            max_output_len = max_seq_len - input_len
+            if msg.sampling_params.max_tokens > max_output_len:
+                msg.sampling_params.max_tokens = max_output_len
+                logger.warning_rank0(
+                    f"Adjust max_tokens to {max_output_len} for request {msg.uid}."
+                )
+            self.prefill_manager.add_one_req(msg)
+        else:
+            logger.error(f"Unknown message type: {type(msg)}")
+            raise NotImplementedError
+
+    def _prepare_batch(self, batch: Batch) -> ForwardInput:
+        needed_size = sum(r.extend_len for r in batch.reqs)
+        batch.out_loc = self.cache_manager.allocate(needed_size)
+        # NOTE: Pad the batch if needed
+        if padding_size := self.engine.graph_runner.pad_batch(batch):
+            batch.out_loc = F.pad(batch.out_loc, (0, padding_size), value=self.engine.dummy_page)
+        # NOTE: prepare 2d indices for token ids loading and writing
+        load_indices = _make_2d_indices(
+            self.token_pool, [(r.table_idx, r.cached_len, r.device_len) for r in batch.padded_reqs]
+        )
+        write_indices = _make_2d_indices(
+            self.token_pool, [(r.table_idx, r.device_len, r.device_len + 1) for r in batch.reqs]
+        )
+        # NOTE: write out_loc to page_table before `prepare_metadata`
+        self.page_table.view(-1)[load_indices] = batch.out_loc
+        self.engine.attn_backend.prepare_metadata(batch)
+        return ForwardInput(
+            batch=batch,
+            sample_args=self.engine.sampler.prepare(batch),
+            load_indices=load_indices,
+            write_indices=write_indices,
+        )
+
+    def _schedule_next_batch(self) -> ForwardInput | None:
+        # TODO: support other policies: e.g. DECODE first
+        batch = (
+            self.prefill_manager.schedule_next_batch(self.prefill_budget)
+            or self.decode_manager.schedule_next_batch()
+        )
+        return self._prepare_batch(batch) if batch else None
 
     def run_when_idle(self) -> None:
         """Called when the scheduler is idle to perform background tasks."""
@@ -131,6 +261,14 @@ class Scheduler(SchedulerIOMixin):
                 data = self.overlap_loop(data)
 
     def shutdown(self) -> None:
+        if self._active_profiler is not None:
+            path = self._active_profiler.stop_and_export()
+            if path is None:
+                logger.error_rank0("Torch profiler export failed during shutdown")
+            else:
+                logger.warning_rank0("Torch profiler trace written to %s during shutdown", path)
+            self._active_profile_uid = None
+            self._active_profiler = None
         torch.cuda.synchronize(self.device)
         self.sync_all_ranks()
         self.engine.shutdown()
@@ -158,6 +296,7 @@ class Scheduler(SchedulerIOMixin):
                 # NOTE: overlap scheduling may make the request freed twice, skip second free
                 if finished and req not in self.finished_reqs:
                     self.decode_manager.remove_req(req)
+                    self._maybe_stop_profiler(req.uid)
                     self._free_req_resources(req)
                     new_finished_reqs.add(req)
                 elif batch.is_prefill:  # for prefill, non-chunk req, cache the prefix
@@ -192,6 +331,7 @@ class Scheduler(SchedulerIOMixin):
             req_to_free = self.prefill_manager.abort_req(msg.uid)
             req_to_free = req_to_free or self.decode_manager.abort_req(msg.uid)
             if req_to_free is not None:
+                self._maybe_stop_profiler(req_to_free.uid)
                 self._free_req_resources(req_to_free)
         else:
             logger.error(f"Unknown message type: {type(msg)}")
@@ -225,6 +365,7 @@ class Scheduler(SchedulerIOMixin):
         return self._prepare_batch(batch) if batch else None
 
     def _forward(self, forward_input: ForwardInput) -> ForwardOutput:
+        self._maybe_start_profiler(forward_input.batch)        
         batch, sample_args, input_mapping, output_mapping = forward_input
         batch.input_ids = self.token_pool[input_mapping]
         forward_output = self.engine.forward_batch(batch, sample_args)

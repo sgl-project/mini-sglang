@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import functools
+import os
+import pathlib
 from typing import TYPE_CHECKING, Any, Literal
 
 from minisgl.env import ENV
@@ -25,9 +27,56 @@ else:
     PyNCCLCommunicator = Any
 
 
+def _link_flags_for_nccl_lib_dir(lib_dir: pathlib.Path) -> list[str] | None:
+    lib_dir = lib_dir.resolve()
+    if not lib_dir.is_dir():
+        return None
+    rpath = f"-Wl,-rpath,{lib_dir}"
+    if (lib_dir / "libnccl.so").exists():
+        return [f"-L{lib_dir}", rpath, "-lnccl"]
+    for name in ("libnccl.so.2", "libnccl.so.1"):
+        if (lib_dir / name).exists():
+            return [f"-L{lib_dir}", rpath, f"-l:{name}"]
+    for so in sorted(lib_dir.glob("libnccl.so.*")):
+        return [f"-L{lib_dir}", rpath, f"-l:{so.name}"]
+    return None
+
+
+def _discover_nccl_ldflags() -> list[str]:
+    """Resolve NCCL for JIT link: system installs often lack libnccl; PyTorch wheels ship it under nvidia/nccl/lib."""
+    for key in ("MINISGL_NCCL_LIB_DIR", "NCCL_LIB_DIR"):
+        raw = os.environ.get(key)
+        if raw:
+            flags = _link_flags_for_nccl_lib_dir(pathlib.Path(raw))
+            if flags:
+                return flags
+    try:
+        import nvidia.nccl as nccl_pkg  # type: ignore[import-not-found]
+
+        paths = getattr(nccl_pkg, "__path__", None)
+        if paths:
+            lib_dir = pathlib.Path(next(iter(paths))) / "lib"
+            flags = _link_flags_for_nccl_lib_dir(lib_dir)
+            if flags:
+                return flags
+    except ImportError:
+        pass
+    try:
+        import torch
+
+        flags = _link_flags_for_nccl_lib_dir(
+            pathlib.Path(torch.__file__).resolve().parent / "lib"
+        )
+        if flags:
+            return flags
+    except ImportError:
+        pass
+    return ["-lnccl"]
+
+
 @functools.cache
 def _load_nccl_module() -> Module:
-    return load_aot("pynccl", cuda_files=["pynccl.cu"], extra_ldflags=["-lnccl"])
+    return load_aot("pynccl", cuda_files=["pynccl.cu"], extra_ldflags=_discover_nccl_ldflags())
 
 
 @functools.cache
