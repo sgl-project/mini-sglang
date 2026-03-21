@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import os
 import random
@@ -35,6 +36,13 @@ def download_qwen_trace(url: str) -> str:
 
 
 async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Pass profile=true to the server (torch profiler trace under /tmp)",
+    )
+    args = parser.parse_args()
     random.seed(42)  # reproducibility
     PORT = 1919
     N = 1000
@@ -46,7 +54,7 @@ async def main():
         logger.info(f"Start benchmarking with {N} requests using model {MODEL}...")
         for scale in SCALES:
             traces = scale_traces(TRACES, scale)
-            results = await benchmark_trace(client, traces, MODEL)
+            results = await benchmark_trace(client, traces, MODEL, profile=args.profile)
             process_benchmark_results(results)
         logger.info("Benchmarking completed.")
 
