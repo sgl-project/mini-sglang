@@ -200,22 +200,6 @@ class Scheduler(SchedulerIOMixin):
         )
         return self._prepare_batch(batch) if batch else None
 
-    def _load_token_ids(self, input: ForwardInput) -> None:
-        batch, load_indices = input.batch, input.load_indices
-        batch.input_ids = self.token_pool.view(-1)[load_indices]
-
-    def _write_token_ids(self, input: ForwardInput, output: ForwardOutput) -> None:
-        self.token_pool.view(-1)[input.write_indices] = output.next_tokens_gpu
-
-    def _forward(self, forward_input: ForwardInput) -> ForwardOutput:
-        self._maybe_start_profiler(forward_input.batch)
-        self._load_token_ids(forward_input)
-        batch, sample_args = forward_input.batch, forward_input.sample_args
-        forward_output = self.engine.forward_batch(batch, sample_args)
-        self._write_token_ids(forward_input, forward_output)
-        self.decode_manager.add_reqs(forward_input.batch.reqs)
-        return forward_output
-
     def run_when_idle(self) -> None:
         """Called when the scheduler is idle to perform background tasks."""
         logger.info_rank0("Scheduler is idle, waiting for new reqs...")
@@ -366,6 +350,7 @@ class Scheduler(SchedulerIOMixin):
         return self._prepare_batch(batch) if batch else None
 
     def _forward(self, forward_input: ForwardInput) -> ForwardOutput:
+        self._maybe_start_profiler(forward_input.batch)        
         batch, sample_args, input_mapping, output_mapping = forward_input
         batch.input_ids = self.token_pool[input_mapping]
         forward_output = self.engine.forward_batch(batch, sample_args)
