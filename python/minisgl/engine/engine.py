@@ -110,7 +110,7 @@ class Engine:
         )
 
     def _init_communication(self, config: EngineConfig) -> torch.distributed.ProcessGroup:
-        if config.tp_info.size == 1 or config.use_pynccl:
+        if config.tp_info.size == 1 or not config.use_pynccl:
             torch.distributed.init_process_group(
                 backend="gloo",
                 rank=config.tp_info.rank,
