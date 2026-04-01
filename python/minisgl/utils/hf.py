@@ -7,6 +7,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 from tqdm.asyncio import tqdm
 from transformers import AutoConfig, AutoTokenizer, PretrainedConfig, PreTrainedTokenizerBase
 
+
 class DisabledTqdm(tqdm):
     def __init__(self, *args, **kwargs):
         kwargs.pop("name", None)

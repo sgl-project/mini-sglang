@@ -25,7 +25,7 @@ class TokenizeManager:
             else:
                 prompt = msg.text
             input_ids: torch.Tensor = (  # type: ignore
-                self.tokenizer.encode(prompt, return_tensors="pt")
+                self.tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=False)
             )
             results.append(input_ids.view(-1).to(torch.int32))
         return results

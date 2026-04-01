@@ -97,7 +97,11 @@ def _get_rope(
             orig_max_pos: int = rope_scaling["original_max_position_embeddings"]
 
             def _find_correction_dim(num_rotations: float) -> float:
-                return rotary_dim * math.log(orig_max_pos / (num_rotations * 2 * math.pi)) / (2 * math.log(base))
+                return (
+                    rotary_dim
+                    * math.log(orig_max_pos / (num_rotations * 2 * math.pi))
+                    / (2 * math.log(base))
+                )
 
             low = max(math.floor(_find_correction_dim(beta_fast)), 0)
             high = min(math.ceil(_find_correction_dim(beta_slow)), rotary_dim // 2 - 1)
@@ -105,7 +109,8 @@ def _get_rope(
             def post_process(inv_freq: torch.Tensor) -> torch.Tensor:
                 ramp = torch.clamp(
                     (torch.arange(rotary_dim // 2, dtype=torch.float32) - low) / max(high - low, 1),
-                    0, 1,
+                    0,
+                    1,
                 )
                 return (inv_freq / factor) * ramp + inv_freq * (1 - ramp)
 

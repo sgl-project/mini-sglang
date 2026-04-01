@@ -8,7 +8,7 @@ from minisgl.layers import BaseOP, OPList, ParallelLMHead, RMSNormFused, VocabPa
 from minisgl.utils import nvtx_annotate
 
 from .base import BaseLLMModel
-from .utils import GatedMLP as LlamaMLP
+from .utils import GatedMLP as Llama4MLP
 from .utils import RopeAttn as LlamaAttn
 
 if TYPE_CHECKING:
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 class LlamaDecoderLayer(BaseOP):
     def __init__(self, config: ModelConfig, layer_id: int):
         self.self_attn = LlamaAttn(config, layer_id)
-        self.mlp = LlamaMLP(config)
+        self.mlp = Llama4MLP(config)
         self.input_layernorm = RMSNormFused(
             size=config.hidden_size,
             eps=config.rms_norm_eps,

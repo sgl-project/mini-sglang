@@ -49,7 +49,11 @@ class Engine:
         set_rope_device(self.device)
         with torch.device("meta"), torch_dtype(config.dtype):
             self.model = create_model(config.model_config)
-        self.model.load_state_dict(self._load_weight_state_dict(config))
+        self.model.load_state_dict(
+            self._load_weight_state_dict(
+                config,
+            )
+        )
 
         # ======================= KV cache initialization ========================
         self.num_pages = self._determine_num_pages(init_free_memory, config)

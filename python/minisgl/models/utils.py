@@ -23,10 +23,13 @@ if TYPE_CHECKING:
 
 
 class GatedMLP(BaseOP):
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, intermediate_size: int | None = None):
+        self.intermediate_size = (
+            intermediate_size if intermediate_size is not None else config.intermediate_size
+        )
         self.gate_up_proj = LinearColParallelMerged(
             config.hidden_size,
-            [config.intermediate_size, config.intermediate_size],
+            [self.intermediate_size, self.intermediate_size],
             has_bias=False,
         )
 
@@ -36,7 +39,7 @@ class GatedMLP(BaseOP):
             raise ValueError(f"Unsupported activation function: {config.hidden_act}")
         self.act_fn = act_fn
         self.down_proj = LinearRowParallel(
-            config.intermediate_size,
+            self.intermediate_size,
             config.hidden_size,
             has_bias=False,
         )
@@ -84,6 +87,11 @@ class RopeAttn(BaseOP):
         *,
         has_attn_bias: bool = False,
         has_qk_norm: bool = False,
+        has_qk_norm_weight: bool = True,
+        has_rope: bool = True,
+        attn_temperature_tuning: bool = False,
+        floor_scale=8192,
+        attn_scale=0.1,
     ):
         head_dim = config.head_dim
         self.qkv_proj = LinearQKVMerged(
@@ -95,8 +103,8 @@ class RopeAttn(BaseOP):
         )
         self.has_qk_norm = has_qk_norm
         if has_qk_norm:
-            self.q_norm = RMSNorm(head_dim, eps=config.rms_norm_eps)
-            self.k_norm = RMSNorm(head_dim, eps=config.rms_norm_eps)
+            self.q_norm = RMSNorm(head_dim, eps=config.rms_norm_eps, has_weight=has_qk_norm_weight)
+            self.k_norm = RMSNorm(head_dim, eps=config.rms_norm_eps, has_weight=has_qk_norm_weight)
         else:
             self.q_norm = None
             self.k_norm = None
@@ -108,6 +116,10 @@ class RopeAttn(BaseOP):
             rotary_config=config.rotary_config,
             q_norm=self.q_norm,
             k_norm=self.k_norm,
+            has_rope=has_rope,
+            attn_temperature_tuning=attn_temperature_tuning,
+            floor_scale=floor_scale,
+            attn_scale=attn_scale,
         )
         self.o_proj = LinearOProj(
             head_dim * config.num_qo_heads,
