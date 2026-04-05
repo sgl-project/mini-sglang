@@ -145,16 +145,16 @@ class Scheduler(SchedulerIOMixin):
         self.grammar_manager.shutdown()
         self.engine.shutdown()
 
-    def _commit_grammar_token(self, req: Req, next_token: int) -> bool | None:
+    def _accept_grammar_token(self, req: Req, next_token: int) -> bool:
         grammar = req.constraint.grammar
-        if grammar is None or isinstance(grammar, futures.Future):
-            return None
+        assert grammar is not None
+        assert not isinstance(grammar, futures.Future)
 
         try:
             grammar.accept_token(next_token)
         except ValueError:
             grammar.finished = True
-            return None
+            raise
 
         finished = req.should_finish(
             next_token,
@@ -178,27 +178,24 @@ class Scheduler(SchedulerIOMixin):
                     continue
                 next_token = next_tokens_cpu[i]
                 next_token_id = int(next_token.item())
+                reply_token_id = next_token_id
+                append_token = True
+
                 if req.is_constrained:
-                    finished = self._commit_grammar_token(req, next_token_id)
-                    if finished is None:
-                        reply.append(
-                            DetokenizeMsg(
-                                uid=req.uid,
-                                next_token=self.eos_token_id,
-                                finished=True,
-                            )
-                        )
-                        if req not in self.finished_reqs:
-                            self.decode_manager.remove_req(req)
-                            self._free_req_resources(req)
-                            new_finished_reqs.add(req)
-                        continue
+                    try:
+                        finished = self._accept_grammar_token(req, next_token_id)
+                    except ValueError:
+                        finished = True
+                        reply_token_id = self.eos_token_id
+                        append_token = False
                 else:
                     finished = req.should_finish(next_token_id, self.eos_token_id)
 
-                req.append_host(next_token.unsqueeze(0))
+                if append_token:
+                    req.append_host(next_token.unsqueeze(0))
+
                 reply.append(
-                    DetokenizeMsg(uid=req.uid, next_token=next_token_id, finished=finished)
+                    DetokenizeMsg(uid=req.uid, next_token=reply_token_id, finished=finished)
                 )
 
                 # NOTE: overlap scheduling may make the request freed twice, skip second free

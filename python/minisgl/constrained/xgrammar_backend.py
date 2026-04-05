@@ -17,6 +17,7 @@ MAX_ROLLBACK_TOKENS = 200
 
 
 def _apply_vocab_mask_torch(logits: torch.Tensor, vocab_mask: torch.Tensor) -> None:
+    # NOTE: logits shape: [batch, vocab], vocab_mask shape: [batch, ceil(vocab / 32)].
     vocab_size = min(logits.shape[1], vocab_mask.shape[1] * 32)
     shifts = torch.arange(32, dtype=torch.int32, device=vocab_mask.device)
     unpacked = ((vocab_mask.unsqueeze(-1) >> shifts) & 1).reshape(vocab_mask.shape[0], -1)
