@@ -31,6 +31,10 @@ class ForwardOutput(NamedTuple):
     copy_done_event: torch.cuda.Event
 
 
+class ModelForwardOutput(NamedTuple):
+    logits: torch.Tensor
+
+
 class Engine:
     def __init__(self, config: EngineConfig):
         assert not torch.cuda.is_initialized()
@@ -201,18 +205,25 @@ class Engine:
 
         self.tp_comm.all_reduce(next_tokens, "min")
 
-    def forward_batch(self, batch: Batch, args: BatchSamplingArgs) -> ForwardOutput:
+    def forward_batch(self, batch: Batch) -> ModelForwardOutput:
         assert torch.cuda.current_stream() == self.stream
         with self.ctx.forward_batch(batch):
             if self.graph_runner.can_use_cuda_graph(batch):
-                logits = self.graph_runner.replay(batch)
-            else:
-                logits = self.model.forward()
+                return ModelForwardOutput(self.graph_runner.replay(batch))
+            return ModelForwardOutput(self.model.forward())
 
+    def sample_batch(
+        self,
+        batch: Batch,
+        forward_output: ModelForwardOutput,
+        args: BatchSamplingArgs,
+    ) -> ForwardOutput:
         for req in batch.reqs:
             req.complete_one()
 
-        next_tokens_gpu = self.sampler.sample(logits[: batch.size], args).to(torch.int32)
+        next_tokens_gpu = self.sampler.sample(forward_output.logits[: batch.size], args).to(
+            torch.int32
+        )
         self._sync_next_tokens(next_tokens_gpu, args)
         next_tokens_cpu = next_tokens_gpu.to("cpu", non_blocking=True)
         copy_done_event = torch.cuda.Event()

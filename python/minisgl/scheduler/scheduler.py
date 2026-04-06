@@ -26,7 +26,7 @@ from .table import TableManager
 from .utils import PendingReq
 
 if TYPE_CHECKING:
-    from minisgl.engine import BatchSamplingArgs, ForwardOutput
+    from minisgl.engine import BatchSamplingArgs, ForwardOutput, ModelForwardOutput
 
 
 logger = init_logger(__name__)
@@ -43,6 +43,7 @@ class ForwardInput(NamedTuple):
 
 
 ForwardData: TypeAlias = "Tuple[ForwardInput, ForwardOutput]"
+PendingData: TypeAlias = "Tuple[ForwardInput, ModelForwardOutput]"
 
 
 class Scheduler(SchedulerIOMixin):
@@ -101,13 +102,23 @@ class Scheduler(SchedulerIOMixin):
             self._process_one_msg(msg)
 
         forward_input = self._schedule_next_batch()
-        ongoing_data = None
+        ongoing_data: ForwardData | None = None
+        pending_data: PendingData | None = None
         if forward_input is not None:
             with self.engine_stream_ctx:  # run the batch in the engine's stream
                 self.engine.stream.wait_stream(self.stream)
-                ongoing_data = (forward_input, self._forward(forward_input))
+                if self._should_delay_sampling(forward_input, last_data):
+                    pending_data = (forward_input, self._forward_batch(forward_input))
+                else:
+                    ongoing_data = (forward_input, self._forward(forward_input))
 
         self._process_last_data(last_data)
+        if pending_data is not None:
+            with self.engine_stream_ctx:
+                ongoing_data = (
+                    pending_data[0],
+                    self._finalize_batch(pending_data[0], pending_data[1]),
+                )
         return ongoing_data
 
     def normal_loop(self) -> None:
@@ -268,13 +279,35 @@ class Scheduler(SchedulerIOMixin):
         )
         return self._prepare_batch(batch) if batch else None
 
+    def _should_delay_sampling(
+        self,
+        forward_input: ForwardInput,
+        last_data: ForwardData | None,
+    ) -> bool:
+        if last_data is None or not forward_input.sample_args.has_grammar:
+            return False
+
+        last_reqs = set(last_data[0].batch.reqs)
+        return any(req.is_constrained and req in last_reqs for req in forward_input.batch.reqs)
+
     def _forward(self, forward_input: ForwardInput) -> ForwardOutput:
-        batch, sample_args, input_mapping, output_mapping = forward_input
+        return self._finalize_batch(forward_input, self._forward_batch(forward_input))
+
+    def _forward_batch(self, forward_input: ForwardInput) -> ModelForwardOutput:
+        batch, _, input_mapping, _ = forward_input
         batch.input_ids = self.token_pool[input_mapping]
-        forward_output = self.engine.forward_batch(batch, sample_args)
-        self.token_pool[output_mapping] = forward_output.next_tokens_gpu
-        self.decode_manager.filter_reqs(forward_input.batch.reqs)
-        return forward_output
+        return self.engine.forward_batch(batch)
+
+    def _finalize_batch(
+        self,
+        forward_input: ForwardInput,
+        forward_output: ModelForwardOutput,
+    ) -> ForwardOutput:
+        batch, sample_args, _, output_mapping = forward_input
+        output = self.engine.sample_batch(batch, forward_output, sample_args)
+        self.token_pool[output_mapping] = output.next_tokens_gpu
+        self.decode_manager.filter_reqs(batch.reqs)
+        return output
 
     def _add_pending_req(self, req: PendingReq) -> None:
         if not req.is_constrained:
