@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent import futures
-from typing import TYPE_CHECKING, List, NamedTuple, NoReturn, Set, Tuple, TypeAlias
+from typing import TYPE_CHECKING, List, NamedTuple, NoReturn, Tuple, TypeAlias
 
 import torch
 from minisgl.core import Batch, Req
@@ -69,7 +69,6 @@ class Scheduler(SchedulerIOMixin):
         )
 
         # some alias for easy access
-        self.finished_reqs: Set[Req] = set()
         self.tokenizer = load_tokenizer(config.model_path)
         self.eos_token_id = self.tokenizer.eos_token_id
         self.token_pool = self.table_manager.token_pool
@@ -182,11 +181,13 @@ class Scheduler(SchedulerIOMixin):
         batch, (_, next_tokens_cpu, copy_done) = last_data[0].batch, last_data[1]
         copy_done.synchronize()
         reply: List[DetokenizeMsg] = []
-        new_finished_reqs: Set[Req] = set()
         with self.cache_manager.lazy_free_region():
             for i, req in enumerate(batch.reqs):
+                if req.finished:
+                    continue
                 if isinstance(req, ChunkedReq):
                     continue
+
                 next_token = next_tokens_cpu[i]
                 next_token_id = int(next_token.item())
                 reply_token_id = next_token_id
@@ -209,15 +210,10 @@ class Scheduler(SchedulerIOMixin):
                     DetokenizeMsg(uid=req.uid, next_token=reply_token_id, finished=finished)
                 )
 
-                # NOTE: overlap scheduling may make the request freed twice, skip second free
-                if finished and req not in self.finished_reqs:
-                    self.decode_manager.remove_req(req)
-                    self._free_req_resources(req)
-                    new_finished_reqs.add(req)
+                if finished:
+                    self._finish_req(req)
                 elif batch.is_prefill:  # for prefill, non-chunk req, cache the prefix
                     self.cache_manager.cache_req(req, finished=False)
-
-        self.finished_reqs = new_finished_reqs
         self.send_result(reply)
 
     def _process_one_msg(self, msg: BaseBackendMsg) -> None:
@@ -247,10 +243,17 @@ class Scheduler(SchedulerIOMixin):
             req_to_free = self.prefill_manager.abort_req(msg.uid)
             req_to_free = req_to_free or self.decode_manager.abort_req(msg.uid)
             if req_to_free is not None:
-                self._free_req_resources(req_to_free)
+                self._finish_req(req_to_free)
         else:
             logger.error(f"Unknown message type: {type(msg)}")
             raise NotImplementedError
+
+    def _finish_req(self, req: Req) -> None:
+        if req.finished:
+            return
+        req.finished = True
+        self.decode_manager.remove_req(req)
+        self._free_req_resources(req)
 
     def _free_req_resources(self, req: Req) -> None:
         self.table_manager.free(req.table_idx)

@@ -44,6 +44,7 @@ class Req:
     sampling_params: SamplingParams
     cache_handle: BaseCacheHandle
     constraint: ReqConstraintState | None = None
+    finished: bool = False
 
     def __post_init__(self) -> None:
         assert self.input_ids.is_cpu
@@ -80,7 +81,7 @@ class Req:
 
     @property
     def can_decode(self) -> bool:
-        return self.remain_len > 0
+        return not self.finished and self.remain_len > 0
 
     @property
     def is_constrained(self) -> bool:
