@@ -48,6 +48,8 @@ dev = [
     "mypy>=0.950",
     "pre-commit>=3.0.0",
     "ruff>=0.11.0",
+    "datasets",
+    "jsonschema",
     "matplotlib>=3.10.5",
     "pyarrow",
 ]
