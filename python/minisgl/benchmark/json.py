@@ -99,6 +99,9 @@ def render_json_prompt_ids(
 
 
 def validate_json_output(output: str, json_schema: str) -> tuple[bool, bool | None]:
+    if "</think>" in output:
+        output = output.split("</think>", 1)[1].lstrip()
+
     try:
         obj = json.loads(output)
     except Exception:
