@@ -67,6 +67,7 @@ class Scheduler(SchedulerIOMixin):
         self.prefill_manager = PrefillManager(
             self.cache_manager, self.table_manager, self.decode_manager
         )
+        self.grammar_manager = GrammarManager(self)
 
         # some alias for easy access
         self.tokenizer = load_tokenizer(config.model_path)
@@ -77,7 +78,6 @@ class Scheduler(SchedulerIOMixin):
 
         # Initialize the I/O mixin
         super().__init__(config, self.engine.tp_cpu_group)
-        self.grammar_manager = GrammarManager(self)
 
     def run_when_idle(self) -> None:
         """Called when the scheduler is idle to perform background tasks."""
