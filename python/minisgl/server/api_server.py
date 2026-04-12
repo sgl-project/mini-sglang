@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -321,21 +320,6 @@ async def shell_completion(req: OpenAICompletionRequest):
     )
 
 
-async def read_stdin():
-    loop = asyncio.get_running_loop()
-    reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-
-    while True:
-        line = await reader.readline()
-        line = line.decode().rstrip("\n")
-
-
-async def async_input(prompt=""):
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, lambda: input(prompt))
-
 
 async def shell():
     commands = ["/exit", "/reset"]
@@ -345,7 +329,6 @@ async def shell():
     try:
         history: List[Tuple[str, str]] = []
         while True:
-            need_stop = False
             cmd = (await session.prompt_async()).strip()
             if cmd == "":
                 continue
@@ -372,8 +355,6 @@ async def shell():
             )
             cur_msg = ""
             async for chunk in (await shell_completion(req)).body_iterator:
-                if need_stop:
-                    break
                 msg = chunk.decode()  # type: ignore
                 assert msg.startswith("data: "), msg
                 msg = msg[6:]
