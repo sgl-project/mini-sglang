@@ -40,7 +40,8 @@ def main() -> None:
     args = parse_args()
 
     seed(0)
-    MODEL = "Qwen/Qwen3-0.6B"
+    # NOTE: Using a small, unaligned model makes the diff easier to observe
+    MODEL = "Qwen/Qwen2-0.5B"
     NUM_SEQS = 100
     MAX_OUTPUT_LEN = 4096
     IGNORE_EOS = False

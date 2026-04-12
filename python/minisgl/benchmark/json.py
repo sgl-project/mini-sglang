@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterator
 
@@ -98,9 +99,21 @@ def render_json_prompt_ids(
     )
 
 
-def validate_json_output(output: str, json_schema: str) -> tuple[bool, bool | None]:
+def normalize_json_output(output: str) -> str:
+    # Reasoning models may emit analysis before the final answer.
     if "</think>" in output:
-        output = output.split("</think>", 1)[1].lstrip()
+        output = output.split("</think>", 1)[1]
+    output = output.strip()
+
+    # Some models wrap the final JSON in one fenced Markdown block.
+    matched = re.fullmatch(r"```(?:json)?[ \t]*\r?\n(.*)\r?\n```", output, re.S | re.I)
+    if matched is not None:
+        output = matched.group(1).strip()
+    return output
+
+
+def validate_json_output(output: str, json_schema: str) -> tuple[bool, bool | None]:
+    output = normalize_json_output(output)
 
     try:
         obj = json.loads(output)
