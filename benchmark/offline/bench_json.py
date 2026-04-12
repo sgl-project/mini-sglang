@@ -95,8 +95,7 @@ def main() -> None:
     parse_ok = 0
     schema_ok = 0
     schema_checked = 0
-    req_outputs = []
-    for i, (sample, result) in enumerate(zip(samples, bench_results)):
+    for sample, result in zip(samples, bench_results):
         token_ids = result["token_ids"]
         output_lens.append(len(token_ids))
         parsed, valid = validate_json_output(result["text"], sample.json_schema)
@@ -104,15 +103,6 @@ def main() -> None:
         if valid is not None:
             schema_checked += 1
             schema_ok += int(valid)
-        req_outputs.append(
-            {
-                "index": i,
-                "output_len": len(token_ids),
-                "parsed": parsed,
-                "schema_valid": valid,
-                "text": result["text"],
-            }
-        )
 
     total_output_budget = sum(sp.max_tokens for sp in sampling_params)
     total_output_tokens = sum(output_lens)
@@ -126,16 +116,6 @@ def main() -> None:
     print(f"Schema valid: {schema_ok}/{schema_checked}")
     throughput = total_output_tokens / t if t > 0 else 0.0
     print(f"Total: {total_output_tokens}tok, Time: {t:.2f}s, " f"Throughput: {throughput:.2f}tok/s")
-    print("==== Request Outputs ====")
-    for item in req_outputs:
-        print(
-            f"[Request {item['index']}] "
-            f"output_len={item['output_len']}tok "
-            f"parsed={item['parsed']} "
-            f"schema_valid={item['schema_valid']}"
-        )
-        print(item["text"])
-        print("====")
 
 
 if __name__ == "__main__":
