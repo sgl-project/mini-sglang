@@ -41,6 +41,8 @@ def _shard_tensor(key: str, value: torch.Tensor, r: int, n: int, num_kv_heads: i
             return value[head_idx * head_dim : (head_idx + 1) * head_dim].clone()
         return value.chunk(n, dim=0)[r].clone()
     elif any(key.count(sub) for sub in _SPLIT_DIM_1):
+        if value.dim() < 2:  # 1D bias: not sharded for row-parallel projections
+            return value
         return value.chunk(n, dim=1)[r].clone()
     elif key.count("lm_head") or key.count("embed_tokens"):
         num_embeddings = value.shape[0]
@@ -88,7 +90,12 @@ def load_weight(model_path: str, device: torch.device) -> Iterator[Tuple[str, to
     expert_buf: Dict[str, Dict[int, torch.Tensor]] = {}
     for file in tqdm(files, desc="Loading weights", disable=not tp_info.is_primary()):
         with safetensors.safe_open(file, framework="pt", device=str(device)) as f:
-            for name in f.keys():
+            # TODO: remove debug print
+            keys = list(f.keys())
+            print(
+                f"\n[DEBUG] Weight file: {file}\n  Keys ({len(keys)}):\n    " + "\n    ".join(keys)
+            )
+            for name in keys:
                 # Strip multimodal wrapper prefix, skip vision/projector weights
                 if name.startswith(("vision_tower.", "multi_modal_projector.")):
                     continue
