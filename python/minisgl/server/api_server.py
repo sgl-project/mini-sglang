@@ -275,6 +275,7 @@ async def v1_completions(req: OpenAICompletionRequest, request: Request):
                 top_p=req.top_p,
                 stop=req.stop,
                 presence_penalty=req.presence_penalty,
+                frequency_penalty=req.frequency_penalty,
             ),
         )
     )
@@ -309,6 +310,7 @@ async def shell_completion(req: OpenAICompletionRequest):
                 top_p=req.top_p,
                 stop=req.stop,
                 presence_penalty=req.presence_penalty,
+                frequency_penalty=req.frequency_penalty,
             ),
         )
     )
