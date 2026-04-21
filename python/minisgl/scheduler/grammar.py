@@ -13,8 +13,7 @@ from .utils import PendingReq
 
 if TYPE_CHECKING:
     from minisgl.constrained import BaseGrammarObject, GrammarKey
-
-    from .scheduler import Scheduler
+    from transformers import PreTrainedTokenizerBase
 
 GRAMMAR_JSON = "json"
 GRAMMAR_READY = "ready"
@@ -30,16 +29,21 @@ class GrammarPollResult:
 
 
 class GrammarManager:
-    def __init__(self, scheduler: Scheduler):
-        self.scheduler = scheduler
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizerBase,
+        vocab_size: int,
+        eos_token_id: int,
+        tp_cpu_group: torch.distributed.ProcessGroup,
+    ) -> None:
         self.grammar_queue: List[PendingReq] = []
         self.grammar_backend = create_grammar_backend(
-            self.scheduler.tokenizer,
-            self.scheduler.engine.sampler.vocab_size,
-            self.scheduler.eos_token_id,
+            tokenizer,
+            vocab_size,
+            eos_token_id,
         )
-        self.tp_cpu_group = scheduler.tp_cpu_group
-        self.tp_size = torch.distributed.get_world_size(group=self.tp_cpu_group)
+        self.tp_cpu_group = tp_cpu_group
+        self.tp_size = torch.distributed.get_world_size(group=tp_cpu_group)
         self.poll_interval = ENV.GRAMMAR_POLL_INTERVAL.value
         self.max_poll_iterations = ENV.GRAMMAR_MAX_POLL_ITERATIONS.value
 

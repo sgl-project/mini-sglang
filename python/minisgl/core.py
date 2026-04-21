@@ -60,8 +60,10 @@ class Req:
     def extend_len(self) -> int:
         return self.device_len - self.cached_len
 
-    def complete_one(self) -> None:
+    def commit_forward(self) -> None:
         self.cached_len = self.device_len
+
+    def advance_token(self) -> None:
         self.device_len += 1
 
     def append_host(self, next_token: torch.Tensor) -> None:

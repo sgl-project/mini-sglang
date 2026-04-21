@@ -67,7 +67,6 @@ class Scheduler(SchedulerIOMixin):
         self.prefill_manager = PrefillManager(
             self.cache_manager, self.table_manager, self.decode_manager
         )
-        self.grammar_manager = GrammarManager(self)
 
         # some alias for easy access
         self.tokenizer = load_tokenizer(config.model_path)
@@ -75,6 +74,12 @@ class Scheduler(SchedulerIOMixin):
         self.token_pool = self.table_manager.token_pool
         self.prefill_budget = config.max_extend_tokens
         # self.config = config
+        self.grammar_manager = GrammarManager(
+            self.tokenizer,
+            self.engine.sampler.vocab_size,
+            self.eos_token_id,
+            self.engine.tp_cpu_group,
+        )
 
         # Initialize the I/O mixin
         super().__init__(config, self.engine.tp_cpu_group)
@@ -299,7 +304,10 @@ class Scheduler(SchedulerIOMixin):
     def _forward_batch(self, forward_input: ForwardInput) -> ModelForwardOutput:
         batch, _, input_mapping, _ = forward_input
         batch.input_ids = self.token_pool[input_mapping]
-        return self.engine.forward_batch(batch)
+        output = self.engine.forward_batch(batch)
+        for req in batch.reqs:
+            req.commit_forward()
+        return output
 
     def _finalize_batch(
         self,
