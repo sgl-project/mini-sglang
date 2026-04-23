@@ -4,6 +4,7 @@ import argparse
 import time
 from random import seed
 
+import torch
 from minisgl.benchmark.json import (
     collect_filtered_json_samples,
     render_json_prompt_ids,
@@ -42,8 +43,8 @@ def main() -> None:
     seed(0)
     # NOTE: Using a small, unaligned model makes the diff easier to observe
     MODEL = "Qwen/Qwen2-0.5B"
-    NUM_SEQS = 100
-    MAX_OUTPUT_LEN = 4096
+    NUM_SEQS = 16
+    MAX_OUTPUT_LEN = 30
     IGNORE_EOS = False
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
@@ -87,9 +88,11 @@ def main() -> None:
         f"preview='{warmup_text}'"
     )
 
+    torch.cuda.profiler.start()
     t = time.time()
     bench_results = llm.generate(prompt_token_ids, sampling_params)
     t = time.time() - t
+    torch.cuda.profiler.stop()
 
     output_lens = []
     parse_ok = 0

@@ -65,16 +65,17 @@ class Sampler:
         if first_grammar is None:
             return
 
-        vocab_mask = first_grammar.allocate_vocab_mask(
-            vocab_size=self.vocab_size,
-            batch_size=len(grammars),
-            device=logits.device,
-        )
-        for i, grammar in enumerate(grammars):
-            if grammar and not grammar.finished and not grammar.is_terminated():
-                grammar.fill_vocab_mask(vocab_mask, i)
-        vocab_mask = first_grammar.move_vocab_mask(vocab_mask, logits.device)
-        first_grammar.apply_vocab_mask(logits, vocab_mask)
+        with torch.cuda.nvtx.range("apply_grammar_mask"):
+            vocab_mask = first_grammar.allocate_vocab_mask(
+                vocab_size=self.vocab_size,
+                batch_size=len(grammars),
+                device=logits.device,
+            )
+            for i, grammar in enumerate(grammars):
+                if grammar and not grammar.finished and not grammar.is_terminated():
+                    grammar.fill_vocab_mask(vocab_mask, i)
+            vocab_mask = first_grammar.move_vocab_mask(vocab_mask, logits.device)
+            first_grammar.apply_vocab_mask(logits, vocab_mask)
 
     def prepare(self, batch: Batch) -> BatchSamplingArgs:
         params = [r.sampling_params for r in batch.reqs]
@@ -99,8 +100,7 @@ class Sampler:
 
     @nvtx_annotate("Sampler")
     def sample(self, logits: torch.Tensor, args: BatchSamplingArgs) -> torch.Tensor:
-        with torch.cuda.nvtx.range("Sampler"):
-            self._apply_grammar_mask(logits, args)
-            if args.temperatures is None:  # greedy sampling
-                return torch.argmax(logits, dim=-1)
-            return sample_impl(logits.float(), args.temperatures, args.top_k, args.top_p)
+        self._apply_grammar_mask(logits, args)
+        if args.temperatures is None:  # greedy sampling
+            return torch.argmax(logits, dim=-1)
+        return sample_impl(logits.float(), args.temperatures, args.top_k, args.top_p)
