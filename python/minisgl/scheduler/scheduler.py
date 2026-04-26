@@ -56,8 +56,10 @@ class Scheduler(SchedulerIOMixin):
 
         # initialize other managers
         self.table_manager = TableManager(config.max_running_req, self.engine.page_table)
+        host_pool = self._init_host_pool(config) if config.hicache_ratio > 0 else None
         self.cache_manager = CacheManager(
-            self.engine.num_pages, config.page_size, self.engine.page_table, config.cache_type
+            self.engine.num_pages, config.page_size, self.engine.page_table, config.cache_type,
+            host_pool=host_pool,
         )
         self.decode_manager = DecodeManager(config.page_size)
         self.prefill_manager = PrefillManager(
@@ -200,6 +202,37 @@ class Scheduler(SchedulerIOMixin):
     def _free_req_resources(self, req: Req) -> None:
         self.table_manager.free(req.table_idx)
         self.cache_manager.cache_req(req, finished=True)
+
+    def _init_host_pool(self, config: SchedulerConfig):
+        from minisgl.kvcache.host_pool import HostKVCachePool
+
+        kv_cache = self.engine.kv_cache
+        device_shape = kv_cache._kv_buffer.shape
+        host_pages = int(device_shape[2] * config.hicache_ratio)
+
+        # Safety check: avoid allocating too much CPU memory
+        import psutil
+        page_bytes = config.page_size * device_shape[4] * device_shape[5] * kv_cache.dtype.itemsize * 2 * kv_cache.num_layers
+        total_host_mem = host_pages * page_bytes
+        # In TP mode, each process allocates its own host pool. Share the available memory.
+        available_mem = psutil.virtual_memory().available / config.tp_info.size
+        if total_host_mem > available_mem * 0.8:
+            new_host_pages = int(available_mem * 0.8 / page_bytes)
+            logger.warning_rank0(
+                f"Requested HiCache size ({total_host_mem/1e9:.2f}GB) exceeds 80% of available memory per rank. "
+                f"Limiting to {new_host_pages} pages ({available_mem*0.8/1e9:.2f}GB)."
+            )
+            host_pages = new_host_pages
+
+        return HostKVCachePool(
+            device_cache=kv_cache._kv_buffer,
+            num_layers=kv_cache.num_layers,
+            num_pages=host_pages,
+            page_size=config.page_size,
+            num_heads=device_shape[4],
+            head_dim=device_shape[5],
+            dtype=kv_cache.dtype,
+        )
 
     def _prepare_batch(self, batch: Batch) -> ForwardInput:
         self.engine.graph_runner.pad_batch(batch)

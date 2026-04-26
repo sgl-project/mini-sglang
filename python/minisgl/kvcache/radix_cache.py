@@ -22,17 +22,19 @@ class RadixTreeNode:
         self.children: Dict[Any, RadixTreeNode] = {}
         self._parent: RadixTreeNode | None = None
         self.ref_count: int = 0
+        self.hit_count: int = 0
         self.uuid = RadixTreeNode.counter
         RadixTreeNode.counter += 1
         self.timestamp = tic or time.monotonic_ns()
 
         # these fields should be updated later
         self._key: torch.Tensor
-        self._value: torch.Tensor
-        self._length: int
+        self._value: torch.Tensor | None = None
+        self._host_value: torch.Tensor | None = None
+        self._length: int = 0
 
-    def set_key_value(self, key: torch.Tensor, value: torch.Tensor) -> None:
-        assert len(key) == len(value)
+    def set_key_value(self, key: torch.Tensor, value: torch.Tensor | None) -> None:
+        assert value is None or len(key) == len(value)
         self._key = key
         self._value = value
         self._length = len(key)
@@ -54,6 +56,18 @@ class RadixTreeNode:
     def value(self) -> torch.Tensor:
         return self._value
 
+    @property
+    def host_value(self) -> torch.Tensor | None:
+        return self._host_value
+
+    @property
+    def evicted(self) -> bool:
+        return self._value is None
+
+    @property
+    def backuped(self) -> bool:
+        return self._host_value is not None
+
     def is_root(self) -> bool:
         return self._parent is None
 
@@ -71,11 +85,15 @@ class RadixTreeNode:
         parent = self.parent
 
         new_node = RadixTreeNode(self.key_fn, self.timestamp)
-        new_node.set_key_value(self._key[:pos], self._value[:pos])
+        new_node.set_key_value(self._key[:pos], self._value[:pos] if self._value is not None else None)
         new_node.set_parent(parent)
         new_node.ref_count = self.ref_count
 
-        self.set_key_value(self._key[pos:], self._value[pos:])
+        if self._host_value is not None:
+            new_node._host_value = self._host_value[:pos].clone()
+            self._host_value = self._host_value[pos:]
+
+        self.set_key_value(self._key[pos:], self._value[pos:] if self._value is not None else None)
         self.set_parent(new_node)
 
         return new_node
@@ -92,10 +110,11 @@ class RadixCacheHandle(BaseCacheHandle):
         node = self.node
         value_list: List[torch.Tensor] = []
         while not node.is_root():
-            value_list.append(node.value)
+            if not node.evicted:
+                value_list.append(node.value)
             node = node.parent
         value_list.reverse()
-        return torch.cat(value_list)
+        return torch.cat(value_list) if value_list else torch.empty(0, dtype=torch.int32)
 
 
 class RadixPrefixCache(BasePrefixCache):
