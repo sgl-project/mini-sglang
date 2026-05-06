@@ -174,10 +174,21 @@ class FlashInferBackend(BaseAttnBackend):
         return self.cached_ones_cpu[:bs]
 
     def forward(
-        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, layer_id: int, batch: Batch
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        layer_id: int,
+        batch: Batch,
+        *,
+        window_size: tuple[int, int] = (-1, -1),
+        softmax_scale: float | None = None,
     ) -> torch.Tensor:
         def _flatten_cache(cache: torch.Tensor) -> torch.Tensor:  # treat page = 1
             return cache.view(-1, 1, cache.shape[2], cache.shape[3])
+
+        if window_size != (-1, -1) or softmax_scale is not None:
+            raise NotImplementedError
 
         metadata = batch.attn_metadata
         assert isinstance(metadata, FIMetadata)
