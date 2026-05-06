@@ -54,4 +54,4 @@ class Gemma3RMSNorm(BaseOP):
 
     def forward_inplace(self, x: torch.Tensor) -> None:
         shape = x.shape  # [t, h, d]
-        x.copy_(self.gemma_rmsnorm(x.view(-1, shape[-1]), self.weight, self.eps).view(shape))
+        x.copy_(self.gemma_rmsnorm(x.reshape(-1, shape[-1]), self.weight, self.eps).reshape(shape))
