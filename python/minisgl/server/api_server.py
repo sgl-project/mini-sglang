@@ -140,14 +140,14 @@ class FrontendManager:
 
             pending = self.ack_map[uid]
             self.ack_map[uid] = []
-            ack = None
             for ack in pending:
+                if ack.finished:
+                    # Consumers may stop at the terminal reply without resuming this generator.
+                    del self.ack_map[uid]
+                    del self.event_map[uid]
                 yield ack
-            if ack and ack.finished:
-                break
-
-        del self.ack_map[uid]
-        del self.event_map[uid]
+                if ack.finished:
+                    return
 
     async def stream_generate(self, uid: int):
         async for ack in self.wait_for_ack(uid):
@@ -345,7 +345,6 @@ async def shell_completion(req: OpenAICompletionRequest):
         media_type="text/event-stream",
         background=BackgroundTask(lambda: _abort),
     )
-
 
 
 async def shell():
