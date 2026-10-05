@@ -70,8 +70,18 @@ class CacheManager:
         cached_len, new_handle = self.prefix_cache.insert_prefix(insert_ids, page_indices)
         # unlock until all operations on handle is done
         self.unlock(old_handle)
-        # this part is already in the prefix cache, free it
-        self._free(page_indices[old_handle.cached_len : cached_len])
+        dup_slice = slice(old_handle.cached_len, cached_len)
+        if dup_slice.start < dup_slice.stop:
+            dup_indices = page_indices[dup_slice].clone()
+            if not finished:
+                # An overlapping request may already have cached this range.
+                # Redirect this live request to canonical pages before freeing duplicates.
+                page_indices[dup_slice].copy_(
+                    new_handle.get_matched_indices()[dup_slice]
+                )
+
+            # This request's old pages are now redundant.
+            self._free(dup_indices)
         if finished:  # this tail part should be freed
             self._free(page_indices[new_handle.cached_len :])
         else:  # keep the tail part, update the handle
