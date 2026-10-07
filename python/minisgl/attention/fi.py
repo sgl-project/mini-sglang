@@ -188,23 +188,32 @@ class FlashInferBackend(BaseAttnBackend):
         return metadata.wrapper.run(q=q, paged_kv_cache=kv_cache)
 
     def prepare_metadata(self, batch: Batch) -> None:
+        """Build per-request query and KV ranges for paged attention.
+
+        Mixed batches use the ragged prefill wrapper: decode requests contribute
+        one query, while prefill requests contribute their current chunk length.
+        """
         reqs = batch.padded_reqs
 
         padded_size = len(reqs)
         seqlens_q = [req.extend_len for req in reqs]
         seqlens_k = [req.device_len for req in reqs]
         cached_lens = [req.cached_len for req in reqs]
-        max_seqlen_q = max(seqlens_q)
         CPU_KWARGS = {"device": "cpu", "dtype": torch.int32, "pin_memory": True}
 
         device = self.device
         seq_len_cpu = torch.tensor(seqlens_k, **CPU_KWARGS)
         cu_seqlens_k_cpu = torch.tensor([0] + seqlens_k, **CPU_KWARGS).cumsum_(dim=0)
-        if max_seqlen_q == 1:  # decode with all extend_len = 1
+        if batch.is_decode:
+            if any(length != 1 for length in seqlens_q):
+                raise ValueError("Decode attention requires one query token per request")
             cu_seqlens_q_cpu = torch.arange(0, padded_size + 1, **CPU_KWARGS)
-        elif all(l == 0 for l in cached_lens):  # prefill with no cache hit
+        elif batch.is_prefill and all(length == 0 for length in cached_lens):
+            # Pure prefill with no cache hit has identical query and KV lengths.
             cu_seqlens_q_cpu = cu_seqlens_k_cpu
-        else:  # normal extend prefill, with partial cache hit
+        else:
+            # Cached prefill and mixed batches need their own query offsets.
+            # Keep this path even when a mixed batch's query lengths are all 1.
             cu_seqlens_q_cpu = torch.tensor([0] + seqlens_q, **CPU_KWARGS).cumsum_(dim=0)
 
         page_table = get_global_ctx().page_table

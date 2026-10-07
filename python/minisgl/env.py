@@ -67,6 +67,8 @@ class EnvClassSingleton:
     # backend runtime
     FLASHINFER_USE_TENSOR_CORES = EnvOption()
     DISABLE_OVERLAP_SCHEDULING = EnvBool(False)
+    # Compare separate and mixed batching with the same engine configuration.
+    DISABLE_MIXED_BATCH = EnvBool(False)
     PYNCCL_MAX_BUFFER_SIZE = EnvMem(1024**3)
 
     def __new__(cls):

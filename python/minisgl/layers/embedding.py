@@ -89,7 +89,9 @@ class ParallelLMHead(VocabParallelEmbedding):
         ctx = get_global_ctx()
         batch = ctx.batch
         bs = batch.size
-        if batch.is_prefill:
+        if not batch.is_decode:
+            # Prefill and mixed batches pack query tokens from multiple requests.
+            # Project only each real request's last input token to logits.
             indices = batch.attn_metadata.get_last_indices(bs)
             x = x[indices].contiguous()
             del indices

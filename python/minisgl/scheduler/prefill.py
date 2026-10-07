@@ -31,6 +31,12 @@ class ChunkedReq(Req):
 
 @dataclass
 class PrefillAdder:
+    """Limit this forward's new input tokens while reserving future KV capacity.
+
+    token_budget and reserved_size are separate constraints: the first controls
+    the prefill chunk size, the second protects ongoing decode and admitted reqs.
+    """
+
     token_budget: int
     reserved_size: int
     cache_manager: CacheManager
@@ -74,6 +80,7 @@ class PrefillAdder:
         is_chunked = chunk_size < remain_len
         CLS = ChunkedReq if is_chunked else Req
         self.token_budget -= chunk_size
+        # Reserve the unfinished prompt and output, not just this smaller chunk.
         self.reserved_size += remain_len + pending_req.output_len
         # NOTE: update the tokens ids only; new pages will be allocated in the scheduler
         _slice = slice(cached_len, cached_len + chunk_size)
@@ -94,6 +101,8 @@ class PrefillAdder:
             return None
 
         if chunked_req := pending_req.chunked_req:
+            # Resume using the existing row/handle and completed prompt KV length.
+            # device_len can include the unused sampled token of a middle chunk.
             return self._add_one_req(
                 pending_req=pending_req,
                 cache_handle=chunked_req.cache_handle,
@@ -124,10 +133,16 @@ class PrefillManager:
         self.pending_list.append(PendingReq(req.uid, req.input_ids, req.sampling_params))
 
     def schedule_next_batch(self, prefill_budget: int) -> Batch | None:
-        if len(self.pending_list) == 0:
+        """Admit prefill inputs within the budget supplied by the scheduler.
+
+        For mixed batches, the caller has already deducted decode input tokens.
+        Do not deduct them again or subtract the separate KV reservation here.
+        """
+        if prefill_budget <= 0 or not self.pending_list:
             return None
 
-        # estimated offset due to in-flight decode
+        # Protect KV capacity for running decode requests exactly once. This
+        # reservation is independent of the input token budget for this forward.
         adder = PrefillAdder(
             token_budget=prefill_budget,
             reserved_size=self.decode_manager.inflight_tokens,

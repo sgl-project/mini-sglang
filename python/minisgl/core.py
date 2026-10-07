@@ -71,7 +71,9 @@ class Req:
 @dataclass
 class Batch:
     reqs: List[Req]
-    phase: Literal["prefill", "decode"]
+    phase: Literal["prefill", "decode", "mixed"]
+    # Snapshot the phase of each real request; CUDA graph padding is not included.
+    req_phases: tuple[Literal["prefill", "decode"], ...] = ()
     # these fields should be set by scheduler
     input_ids: torch.Tensor = field(init=False)
     positions: torch.Tensor = field(init=False)
@@ -80,6 +82,27 @@ class Batch:
     # this field should be set by attention backend
     attn_metadata: BaseAttnMetadata = field(init=False)
 
+    def __post_init__(self) -> None:
+        if self.phase not in ("prefill", "decode", "mixed"):
+            raise ValueError(f"Unknown batch phase: {self.phase}")
+        if not self.req_phases:
+            if self.phase == "mixed":
+                raise ValueError("Mixed batches require explicit per-request phases")
+            # Keep existing Batch(reqs=..., phase=...) callers compatible.
+            self.req_phases = (self.phase,) * self.size
+            return
+
+        self.req_phases = tuple(self.req_phases)
+        if len(self.req_phases) != self.size:
+            raise ValueError("req_phases must have one entry for each real request")
+        if any(phase not in ("prefill", "decode") for phase in self.req_phases):
+            raise ValueError("Request phases must be either prefill or decode")
+        if self.phase == "mixed":
+            if set(self.req_phases) != {"prefill", "decode"}:
+                raise ValueError("Mixed batches must contain both prefill and decode requests")
+        elif any(phase != self.phase for phase in self.req_phases):
+            raise ValueError("Request phases must match a pure batch's phase")
+
     @property
     def is_prefill(self) -> bool:
         return self.phase == "prefill"
@@ -87,6 +110,13 @@ class Batch:
     @property
     def is_decode(self) -> bool:
         return self.phase == "decode"
+
+    @property
+    def is_mixed(self) -> bool:
+        return self.phase == "mixed"
+
+    def is_prefill_req(self, index: int) -> bool:
+        return self.req_phases[index] == "prefill"
 
     @property
     def size(self) -> int:

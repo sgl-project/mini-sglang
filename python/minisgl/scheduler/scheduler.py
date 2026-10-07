@@ -44,6 +44,7 @@ ForwardData: TypeAlias = "Tuple[ForwardInput, ForwardOutput]"
 
 class Scheduler(SchedulerIOMixin):
     def __init__(self, config: SchedulerConfig):
+        from minisgl.attention.fi import FlashInferBackend
         from minisgl.engine import Engine
 
         self.engine = Engine(config)
@@ -70,6 +71,15 @@ class Scheduler(SchedulerIOMixin):
         self.eos_token_id = self.tokenizer.eos_token_id
         self.token_pool = self.table_manager.token_pool
         self.prefill_budget = config.max_extend_tokens
+        # Enable only the single-GPU FlashInfer path adapted for mixed batches.
+        # Disabling it restores separate batching for controlled comparisons.
+        self._use_mixed_batch = (
+            not ENV.DISABLE_MIXED_BATCH
+            and config.tp_info.size == 1
+            and isinstance(self.engine.attn_backend, FlashInferBackend)
+        )
+        policy = "decode-first mixed" if self._use_mixed_batch else "prefill-first separate"
+        logger.info_rank0(f"Scheduling policy: {policy} (token budget={self.prefill_budget})")
         # self.config = config
 
         # Initialize the I/O mixin
@@ -147,20 +157,30 @@ class Scheduler(SchedulerIOMixin):
             for i, req in enumerate(batch.reqs):
                 if isinstance(req, ChunkedReq):
                     continue
+                # An EOS in the previous batch can finish this request while
+                # another forward is in flight. Discard that extra result.
+                if req in self.finished_reqs:
+                    continue
                 next_token = next_tokens_cpu[i]
                 req.append_host(next_token.unsqueeze(0))
                 next_token = int(next_token.item())
-                finished = not req.can_decode
+                # device_len can already include the next in-flight forward.
+                # Stop at the number of tokens actually appended on the host.
+                finished = len(req.input_ids) >= req.max_device_len
                 if not req.sampling_params.ignore_eos:
                     finished |= next_token == self.eos_token_id
                 reply.append(DetokenizeMsg(uid=req.uid, next_token=next_token, finished=finished))
 
-                # NOTE: overlap scheduling may make the request freed twice, skip second free
-                if finished and req not in self.finished_reqs:
-                    self.decode_manager.remove_req(req)
-                    self._free_req_resources(req)
-                    new_finished_reqs.add(req)
-                elif batch.is_prefill:  # for prefill, non-chunk req, cache the prefix
+                if finished:
+                    # Overlap can return another result for an already-freed request.
+                    # Do not free it again or register its prefix as still running.
+                    if req not in self.finished_reqs:
+                        self.decode_manager.remove_req(req)
+                        self._free_req_resources(req)
+                        new_finished_reqs.add(req)
+                elif batch.is_prefill_req(i):
+                    # Cache final prefill chunks using this batch's phase snapshot.
+                    # Req lengths may already have advanced in the next forward.
                     self.cache_manager.cache_req(req, finished=False)
 
         self.finished_reqs = new_finished_reqs
@@ -216,12 +236,57 @@ class Scheduler(SchedulerIOMixin):
             write_tuple=write_mapping,
         )
 
-    def _schedule_next_batch(self) -> ForwardInput | None:
-        # TODO: support other policies: e.g. DECODE first
-        batch = (
-            self.prefill_manager.schedule_next_batch(self.prefill_budget)
-            or self.decode_manager.schedule_next_batch()
+    def _schedule_mixed_batch(self) -> Batch | None:
+        """Select decode first, then fill the remaining input budget with prefill."""
+        if self.prefill_budget <= 0:
+            raise ValueError("Mixed batching requires a positive input token budget")
+
+        decode_batch = self.decode_manager.schedule_next_batch()
+        decode_reqs = decode_batch.reqs if decode_batch is not None else []
+        if any(req.extend_len != 1 for req in decode_reqs):
+            raise RuntimeError("Each running decode request must have one input token")
+        decode_tokens = sum(req.extend_len for req in decode_reqs)
+        if decode_tokens > self.prefill_budget:
+            raise ValueError(
+                "Mixed batching requires --max-prefill-length to be at least the "
+                f"number of running decode tokens ({decode_tokens})"
+            )
+
+        # This limits this iteration's input tokens. PrefillManager separately
+        # reserves KV capacity for running decode requests via inflight_tokens.
+        remaining_budget = self.prefill_budget - decode_tokens
+        prefill_batch = (
+            self.prefill_manager.schedule_next_batch(remaining_budget)
+            if remaining_budget > 0
+            else None
         )
+        if decode_batch is None:
+            return prefill_batch
+        if prefill_batch is None:
+            return decode_batch
+
+        reqs = decode_reqs + prefill_batch.reqs
+        if len({req.uid for req in reqs}) != len(reqs):
+            # Do not silently drop a prefill request after its resources have
+            # been allocated; duplicate ownership is a manager invariant bug.
+            raise RuntimeError("A mixed batch cannot contain duplicate request IDs")
+
+        # Capture the source in this batch: Req objects can be shared with the
+        # next in-flight batch, so their mutable lengths cannot identify phase.
+        return Batch(
+            reqs=reqs,
+            phase="mixed",
+            req_phases=("decode",) * len(decode_reqs) + ("prefill",) * len(prefill_batch.reqs),
+        )
+
+    def _schedule_next_batch(self) -> ForwardInput | None:
+        if self._use_mixed_batch:
+            batch = self._schedule_mixed_batch()
+        else:
+            batch = (
+                self.prefill_manager.schedule_next_batch(self.prefill_budget)
+                or self.decode_manager.schedule_next_batch()
+            )
         return self._prepare_batch(batch) if batch else None
 
     def _forward(self, forward_input: ForwardInput) -> ForwardOutput:
