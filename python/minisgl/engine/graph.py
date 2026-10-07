@@ -19,6 +19,8 @@ logger = init_logger(__name__)
 
 @dataclass
 class GraphCaptureBuffer:
+    """Fixed buffers for pure decode graphs, with one input token per request."""
+
     input_ids: torch.Tensor
     out_loc: torch.Tensor
     positions: torch.Tensor
@@ -34,12 +36,14 @@ class GraphCaptureBuffer:
         )
 
     def set_batch(self, batch: Batch) -> None:
+        assert batch.is_decode, "CUDA graph buffers require a pure decode batch"
         _slice = slice(batch.padded_size)
         batch.input_ids = self.input_ids[_slice]
         batch.out_loc = self.out_loc[_slice]
         batch.positions = self.positions[_slice]
 
     def copy_from(self, batch: Batch) -> None:
+        assert batch.is_decode, "CUDA graph buffers require a pure decode batch"
         _slice = slice(batch.padded_size)
         self.input_ids[_slice] = batch.input_ids
         self.out_loc[_slice] = batch.out_loc
@@ -147,6 +151,7 @@ class GraphRunner:
         logger.info_rank0(f"Free GPU memory after capturing CUDA graphs: {mem_GB(free_memory)}")
 
     def can_use_cuda_graph(self, batch: Batch) -> bool:
+        # Mixed batches use eager forward, even if all query lengths are 1.
         return batch.is_decode and batch.size <= self.max_graph_bs
 
     def replay(self, batch: Batch) -> torch.Tensor:
@@ -158,11 +163,13 @@ class GraphRunner:
         return self.buffer.logits[: batch.size]
 
     def pad_batch(self, batch: Batch) -> None:
-        padded_size = (  # choose the first available batch size
-            next(bs for bs in self.graph_bs_list if bs >= batch.size)
-            if self.can_use_cuda_graph(batch)
-            else batch.size
-        )
+        if not self.can_use_cuda_graph(batch):
+            # Prefill/mixed batches keep their real requests and query lengths.
+            batch.padded_reqs = list(batch.reqs)
+            return
+
+        # Choose the first captured size that fits this pure decode batch.
+        padded_size = next(bs for bs in self.graph_bs_list if bs >= batch.size)
         batch.padded_reqs = batch.reqs + [self.dummy_req] * (padded_size - batch.size)
 
     # NOTE: This must be called before freeing NCCL resources to prevent program hang
