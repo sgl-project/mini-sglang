@@ -24,7 +24,6 @@ from minisgl.utils import ZmqAsyncPullQueue, ZmqAsyncPushQueue, init_logger
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from pydantic import BaseModel, Field
-from starlette.background import BackgroundTask
 
 from .args import ServerArgs
 
@@ -337,15 +336,10 @@ async def shell_completion(req: OpenAICompletionRequest):
         )
     )
 
-    async def _abort():
-        await state.abort_user(uid)
-
     return StreamingResponse(
         state.stream_generate(uid),
         media_type="text/event-stream",
-        background=BackgroundTask(lambda: _abort),
     )
-
 
 
 async def shell():
@@ -365,7 +359,8 @@ async def shell():
                 if cmd == "/reset":
                     history = []
                     continue
-                raise ValueError(f"Unknown command: {cmd}")
+                print(f"Unknown command: {cmd}. Available commands: {', '.join(commands)}")
+                continue
             history_messages: List[Message] = []
             for user_msg, assistant_msg in history:
                 history_messages.append(Message(role="user", content=user_msg))
