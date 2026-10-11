@@ -19,7 +19,7 @@ class A:
     w: torch.Tensor
 
 
-@call_if_main()
+@call_if_main(__name__)
 def test_serialize_deserialize():
 
     t = torch.tensor([1, 2, 3], dtype=torch.int32)
@@ -28,8 +28,17 @@ def test_serialize_deserialize():
     logger.info(data)
     y = deserialize_type({"A": A}, data)
     logger.info(y)
+    assert (y.x, y.y) == (10, "hello")
+    assert torch.equal(y.w, t) and y.w.dtype == t.dtype
+    assert len(y.z) == 1 and (y.z[0].x, y.z[0].y, y.z[0].z) == (20, "world", [])
+    assert torch.equal(y.z[0].w, t)
 
     u = BatchBackendMsg([UserMsg(uid=0, input_ids=t, sampling_params=SamplingParams())])
     result = u.decoder(u.encoder())
     logger.info(u)
     logger.info(result)
+    assert isinstance(result, BatchBackendMsg) and len(result.data) == 1
+    msg = result.data[0]
+    assert isinstance(msg, UserMsg) and msg.uid == 0
+    assert torch.equal(msg.input_ids, t)
+    assert msg.sampling_params == SamplingParams()
