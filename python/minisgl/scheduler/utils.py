@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -25,9 +25,3 @@ class PendingReq:
     @property
     def output_len(self) -> int:
         return self.sampling_params.max_tokens
-
-
-@dataclass
-class ScheduleResult:
-    reqs: List[PendingReq]
-    output_indices: List[torch.Tensor]
