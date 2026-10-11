@@ -32,7 +32,7 @@ class NaivePrefixCache(BasePrefixCache):
     def evict(self, size: int) -> torch.Tensor:
         if size == 0:
             return self.empty_tensor
-        raise NotImplementedError("NaiveCacheManager does not support eviction.")
+        raise NotImplementedError("NaivePrefixCache does not support eviction.")
 
     def reset(self) -> None:
         pass

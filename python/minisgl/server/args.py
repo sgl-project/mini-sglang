@@ -80,7 +80,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         type=str,
         default="auto",
         choices=["auto", "float16", "bfloat16", "float32"],
-        help="Data type for model weights and activations. 'auto' will use FP16 for FP32/FP16 models and BF16 for BF16 models.",
+        help="Data type for model weights and activations. 'auto' uses the dtype in the model config.",
     )
 
     parser.add_argument(
@@ -110,7 +110,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
         "--memory-ratio",
         type=float,
         default=ServerArgs.memory_ratio,
-        help="The fraction of GPU memory to use for KV cache.",
+        help="The fraction of free GPU memory to use for model weights and KV cache.",
     )
 
     assert ServerArgs.use_dummy_weight == False

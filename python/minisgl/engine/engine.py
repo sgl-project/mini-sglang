@@ -161,7 +161,9 @@ class Engine:
             available_memory = int(config.memory_ratio * old_free_memory) - model_memory
             num_pages = available_memory // cache_per_page
 
-        assert num_pages > 1, "Not enough memory for KV cache, try reducing --num-pages"
+        assert (
+            num_pages > 1
+        ), "Not enough memory for KV cache, try increasing --memory-ratio or --num-pages"
         num_tokens = num_pages * config.page_size
         real_kv_size = num_pages * cache_per_page
         logger.info(f"Allocating {num_tokens} tokens for KV cache, K + V = {mem_GB(real_kv_size)}")
