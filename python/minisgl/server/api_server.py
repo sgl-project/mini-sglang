@@ -347,7 +347,6 @@ async def shell_completion(req: OpenAICompletionRequest):
     )
 
 
-
 async def shell():
     commands = ["/exit", "/reset"]
     completer = WordCompleter(commands)
