@@ -71,7 +71,7 @@ Since Mini-SGLang requires Linux-specific dependencies, Windows users should use
    uv pip install -e .
    ```
 
-4. **Access from Windows**: The server will be accessible at `http://localhost:8000` from Windows browsers and applications.
+4. **Access from Windows**: The server will be accessible at `http://localhost:1919` (the default port) from Windows browsers and applications.
 
 </details>
 
@@ -154,7 +154,7 @@ Test Configuration:
 
 ### Online inference
 
-See [benchmark_qwen.py](./benchmark/online/bench_qwen.py) for more details.
+See [bench_qwen.py](./benchmark/online/bench_qwen.py) for more details.
 
 Test Configuration:
 

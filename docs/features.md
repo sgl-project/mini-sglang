@@ -20,11 +20,12 @@ To scale performance across multiple GPUs, Mini-SGLang supports Tensor Paralleli
 
 ## Supported Models
 
-Our framework currently supports the following dense model architectures:
+Our framework currently supports the following model architectures:
 
 - [`Llama-3`](https://huggingface.co/collections/meta-llama/llama-31) series
 - [`Qwen-3`](https://huggingface.co/collections/Qwen/qwen3) series (including MoE)
 - [`Qwen-2.5`](https://huggingface.co/collections/Qwen/qwen25) series
+- `Mistral` dense models (`MistralForCausalLM`, `Mistral3ForConditionalGeneration`)
 
 ## Chunked Prefill
 
