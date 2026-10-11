@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Literal, Tuple
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from minisgl.core import SamplingParams
 from minisgl.env import ENV
@@ -254,12 +254,15 @@ async def v1_root():
 
 @app.post("/v1/chat/completions")
 async def v1_completions(req: OpenAICompletionRequest, request: Request):
-    state = get_global_state()
     if req.messages:
         prompt = [msg.model_dump() for msg in req.messages]
-    else:
-        assert req.prompt is not None, "Either 'messages' or 'prompt' must be provided"
+    elif req.prompt is not None:
         prompt = req.prompt
+    else:
+        raise HTTPException(
+            status_code=400, detail="Either 'messages' or 'prompt' must be provided"
+        )
+    state = get_global_state()
 
     # TODO: support more sampling parameters
     uid = state.new_user()
@@ -345,7 +348,6 @@ async def shell_completion(req: OpenAICompletionRequest):
         media_type="text/event-stream",
         background=BackgroundTask(lambda: _abort),
     )
-
 
 
 async def shell():
