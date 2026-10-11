@@ -177,10 +177,13 @@ class Scheduler(SchedulerIOMixin):
             input_len, max_seq_len = len(msg.input_ids), self.engine.max_seq_len
             max_output_len = max_seq_len - input_len
             if max_output_len <= 0:
-                return logger.warning_rank0(
+                logger.warning_rank0(
                     f"Input sequence length {input_len} exceeds {max_seq_len}, "
                     f"request {msg.uid} is dropped."
                 )
+                # finish the request with no output, so that the frontend does not wait forever
+                eos_msg = DetokenizeMsg(uid=msg.uid, next_token=self.eos_token_id, finished=True)
+                return self.send_result([eos_msg])
             if msg.sampling_params.max_tokens > max_output_len:
                 msg.sampling_params.max_tokens = max_output_len
                 logger.warning_rank0(
