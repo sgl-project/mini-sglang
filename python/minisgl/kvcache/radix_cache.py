@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import heapq
+from collections import deque
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Tuple, TypeAlias
@@ -185,7 +186,79 @@ class RadixPrefixCache(BasePrefixCache):
         )
 
     def check_integrity(self) -> None:
-        pass
+        """Walk the radix tree and verify internal consistency.
+
+        Raises AssertionError on any of these violations:
+        1. Sum of non-root node lengths != evictable_size + protected_size
+        2. ref_count distribution does not match evictable/protected split
+        3. Duplicate page indices across nodes (two nodes claim the same page)
+        4. A node appears more than once in the tree (cycle detected)
+        """
+        visited: set[int] = set()
+        total_node_length = 0
+        evictable_len = 0
+        protected_len = 0
+        all_page_indices: list[int] = []
+
+        queue: deque[RadixTreeNode] = deque([self.root_node])
+        while queue:
+            node = queue.popleft()
+
+            if node.uuid in visited:
+                raise AssertionError(
+                    f"RadixCache integrity: node {node.uuid} visited twice "
+                    f"(cycle or broken parent chain)"
+                )
+            visited.add(node.uuid)
+
+            if not node.is_root():
+                total_node_length += node.length
+                all_page_indices.extend(node.value.tolist())
+
+                if node.ref_count == 0:
+                    evictable_len += node.length
+                else:
+                    protected_len += node.length
+
+            for child in node.children.values():
+                queue.append(child)
+
+        # Check 1: total node length matches tracked size
+        expected_total = self.evictable_size + self.protected_size
+        if total_node_length != expected_total:
+            raise AssertionError(
+                f"RadixCache integrity: sum of non-root node lengths "
+                f"{total_node_length} != expected {expected_total} "
+                f"(evictable={self.evictable_size}, protected={self.protected_size})"
+            )
+
+        # Check 2: ref_count distribution matches evictable/protected split
+        if evictable_len != self.evictable_size:
+            raise AssertionError(
+                f"RadixCache integrity: evictable_size mismatch: "
+                f"tree sum from ref_count==0 = {evictable_len}, "
+                f"self.evictable_size = {self.evictable_size}"
+            )
+        if protected_len != self.protected_size:
+            raise AssertionError(
+                f"RadixCache integrity: protected_size mismatch: "
+                f"tree sum from ref_count>0 = {protected_len}, "
+                f"self.protected_size = {self.protected_size}"
+            )
+
+        # Check 3: no duplicate page indices across nodes
+        seen: set[int] = set()
+        duplicates: list[int] = []
+        for idx in all_page_indices:
+            if idx in seen:
+                duplicates.append(idx)
+            else:
+                seen.add(idx)
+        if duplicates:
+            raise AssertionError(
+                f"RadixCache integrity: duplicate page indices found: "
+                f"{sorted(set(duplicates))}"
+            )
 
     def _collect_leave_nodes_for_evict(self) -> List[RadixTreeNode]:
         nodes: List[RadixTreeNode] = [self.root_node]
