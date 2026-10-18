@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Dict
 
 import torch
@@ -55,6 +56,9 @@ class ParallelLMHead(VocabParallelEmbedding):
         self.bias = torch.empty(self.num_embeddings_tp) if bias else None
         self.tied_embedding = tied_embedding
         assert (tied_embedding is not None) == tie_word_embeddings
+        self.int8_enabled = os.environ.get("MINISGL_LMHEAD_INT8", "0") == "1"
+        self._int8_weight: torch.Tensor | None = None
+        self._int8_weight_scale: torch.Tensor | None = None
 
     def load_state_dict(
         self,
@@ -95,6 +99,22 @@ class ParallelLMHead(VocabParallelEmbedding):
             del indices
 
         module = self.tied_embedding or self
+        if self.int8_enabled and self.tp_size == 1:
+            from minisgl.kernel.triton.int8_lm_head import int8_lm_head, quantize_weight
+
+            if self._int8_weight is None:
+                self._int8_weight, self._int8_weight_scale = quantize_weight(module.weight)
+            refine_k = int(os.environ.get("MINISGL_LMHEAD_REFINE_K", "64"))
+            logits = int8_lm_head(
+                x,
+                module.weight,
+                self._int8_weight,
+                self._int8_weight_scale,
+                refine_k,
+            )
+            if self.bias is not None:
+                logits = logits + self.bias
+            return logits
         logits = F.linear(x, module.weight, self.bias)
         if self.tp_size == 1:
             return logits
