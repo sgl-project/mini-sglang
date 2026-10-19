@@ -68,6 +68,21 @@ class DetokenizeManager:
         self.eos_token_id = self.tokenizer.eos_token_id
 
     def detokenize(self, msgs: List[DetokenizeMsg]) -> List[str]:
+        incremental_strs: List[str] = []
+        start = 0
+        seen = set()
+        for i, msg in enumerate(msgs):
+            if msg.uid in seen:
+                # Advance each request's decode state before processing its next token.
+                incremental_strs.extend(self._detokenize_batch(msgs[start:i]))
+                start = i
+                seen.clear()
+            seen.add(msg.uid)
+        if start < len(msgs):
+            incremental_strs.extend(self._detokenize_batch(msgs[start:]))
+        return incremental_strs
+
+    def _detokenize_batch(self, msgs: List[DetokenizeMsg]) -> List[str]:
         read_ids: List[List[int]] = []
         surr_ids: List[List[int]] = []
         for msg in msgs:
