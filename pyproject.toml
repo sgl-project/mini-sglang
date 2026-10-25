@@ -29,6 +29,7 @@ dependencies = [
     "transformers>=4.56.0,<=4.57.3",
     "flashinfer-python>=0.5.3",
     "pyzmq",
+    "setproctitle",
     "uvicorn",
     "fastapi",
     "prompt_toolkit",

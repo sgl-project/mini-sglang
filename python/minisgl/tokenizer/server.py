@@ -19,6 +19,7 @@ from minisgl.message import (
     UserReply,
 )
 from minisgl.utils import ZmqPullQueue, ZmqPushQueue, init_logger, load_tokenizer
+from setproctitle import setproctitle
 
 
 def _unwrap_msg(msg: BaseTokenizerMsg) -> List[BaseTokenizerMsg]:
@@ -40,6 +41,8 @@ def tokenize_worker(
     model_source: str = "huggingface",
     ack_queue: mp.Queue[str] | None = None,
 ) -> None:
+    setproctitle(mp.current_process().name)
+
     send_backend = ZmqPushQueue(backend_addr, create=False, encoder=BaseBackendMsg.encoder)
     send_frontend = ZmqPushQueue(frontend_addr, create=False, encoder=BaseFrontendMsg.encoder)
     recv_listener = ZmqPullQueue(addr, create=create, decoder=BatchTokenizerMsg.decoder)
