@@ -8,12 +8,15 @@ from typing import TYPE_CHECKING
 
 from minisgl.distributed import DistributedInfo
 from minisgl.utils import init_logger
+from setproctitle import setproctitle
 
 if TYPE_CHECKING:
     from .args import ServerArgs
 
 
 def _run_scheduler(args: ServerArgs, ack_queue: mp.Queue[str]) -> None:
+    setproctitle(mp.current_process().name)
+
     import torch
     from minisgl.scheduler import Scheduler
 
@@ -83,7 +86,11 @@ def launch_server(run_shell: bool = False) -> None:
                 "ack_queue": ack_queue,
             },
             daemon=False,
-            name="minisgl-detokenizer-0",
+            name=(
+                "minisgl-tokenizer-detokenizer-0"
+                if num_tokenizers == 0
+                else "minisgl-detokenizer-0"
+            ),
         ).start()
         for i in range(num_tokenizers):
             mp.Process(
