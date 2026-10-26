@@ -6,6 +6,8 @@
 
 A **lightweight yet high-performance** inference framework for Large Language Models.
 
+**English** | [简体中文](https://github.com/sgl-project/mini-sglang/blob/main/README.zh.md)
+
 ---
 
 Mini-SGLang is a compact implementation of [SGLang](https://github.com/sgl-project/sglang), designed to demystify the complexities of modern LLM serving systems. With a compact codebase of **~5,000 lines of Python**, it serves as both a capable inference engine and a transparent reference for researchers and developers.
