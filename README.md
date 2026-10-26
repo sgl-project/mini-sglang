@@ -184,3 +184,4 @@ python3 -m sglang.launch_server --model "Qwen/Qwen3-32B" --tp 4 \
 
 - **[Detailed Features](./docs/features.md)**: Explore all available features and command-line arguments.
 - **[System Architecture](./docs/structures.md)**: Dive deep into the design and data flow of Mini-SGLang.
+- **[LLM Serving FAQ](./docs/faq.md)**: Understand model instances, tokenization, scheduling, and prefix reuse.
