@@ -79,6 +79,16 @@ class LLM(Scheduler):
         prompts: List[str] | List[List[int]],
         sampling_params: List[SamplingParams] | SamplingParams,
     ) -> List[Dict[str, str | List[int]]]:
+        """Generate outputs using shared or per-prompt sampling parameters.
+
+        A parameter list must match the number of prompts; otherwise ValueError
+        is raised before request state is changed or inference is started.
+        """
+        if isinstance(sampling_params, list) and len(sampling_params) != len(prompts):
+            raise ValueError(
+                f"Got {len(sampling_params)} sampling parameters for {len(prompts)} prompts; "
+                "expected one per prompt"
+            )
         self.pending_requests = []
         self.status_map = {}
         self.counter = 0
