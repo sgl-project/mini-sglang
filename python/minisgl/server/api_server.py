@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Literal, Tuple
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from minisgl.core import SamplingParams
 from minisgl.env import ENV
@@ -157,8 +157,20 @@ class FrontendManager:
         yield "data: [DONE]\n".encode()
         logger.debug("Finished streaming response for user %s", uid)
 
-    async def stream_chat_completions(self, uid: int):
-        first_chunk = True
+    async def stream_chat_completions(self, uid: int, model: str):
+        chunk_id, created = f"chatcmpl-{uid}", int(time.time())
+
+        def make_chunk(delta: Dict[str, str], finish_reason: str | None) -> bytes:
+            chunk = {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+            }
+            return f"data: {json.dumps(chunk)}\n\n".encode()
+
+        first_chunk, finish_reason = True, None
         async for ack in self.wait_for_ack(uid):
             delta = {}
             if first_chunk:
@@ -166,26 +178,46 @@ class FrontendManager:
                 first_chunk = False
             if ack.incremental_output:
                 delta["content"] = ack.incremental_output
-
-            chunk = {
-                "id": f"cmpl-{uid}",
-                "object": "text_completion.chunk",
-                "choices": [{"delta": delta, "index": 0, "finish_reason": None}],
-            }
-            yield f"data: {json.dumps(chunk)}\n\n".encode()
-
+            yield make_chunk(delta, None)
             if ack.finished:
+                finish_reason = ack.finish_reason
                 break
 
-        # send final finish_reason
-        end_chunk = {
-            "id": f"cmpl-{uid}",
-            "object": "text_completion.chunk",
-            "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}],
-        }
-        yield f"data: {json.dumps(end_chunk)}\n\n".encode()
+        yield make_chunk({}, finish_reason or "stop")
         yield b"data: [DONE]\n\n"
         logger.debug("Finished streaming response for user %s", uid)
+
+    async def stream_completions(self, uid: int, model: str):
+        chunk_id, created = f"cmpl-{uid}", int(time.time())
+        async for ack in self.wait_for_ack(uid):
+            chunk = {
+                "id": chunk_id,
+                "object": "text_completion",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "text": ack.incremental_output,
+                        "logprobs": None,
+                        "finish_reason": (ack.finish_reason or "stop") if ack.finished else None,
+                    }
+                ],
+            }
+            yield f"data: {json.dumps(chunk)}\n\n".encode()
+            if ack.finished:
+                break
+        yield b"data: [DONE]\n\n"
+        logger.debug("Finished streaming response for user %s", uid)
+
+    async def collect(self, uid: int) -> Tuple[str, UserReply]:
+        """Wait for a request to finish and return its full output and its last reply."""
+        output = ""
+        async for ack in self.wait_for_ack(uid):
+            output += ack.incremental_output
+            if ack.finished:
+                return output, ack
+        raise RuntimeError(f"Request {uid} ended without a finished reply")
 
     async def stream_with_cancellation(self, generator, request: Request, uid: int):
         try:
@@ -252,21 +284,22 @@ async def v1_root():
     return {"status": "ok"}
 
 
-@app.post("/v1/chat/completions")
-async def v1_completions(req: OpenAICompletionRequest, request: Request):
-    state = get_global_state()
-    if req.messages:
-        prompt = [msg.model_dump() for msg in req.messages]
-    else:
-        assert req.prompt is not None, "Either 'messages' or 'prompt' must be provided"
-        prompt = req.prompt
+def _usage(ack: UserReply) -> Dict[str, int]:
+    return {
+        "prompt_tokens": ack.prompt_tokens,
+        "completion_tokens": ack.completion_tokens,
+        "total_tokens": ack.prompt_tokens + ack.completion_tokens,
+    }
 
+
+async def _submit(req: OpenAICompletionRequest, text: str | List[Dict[str, str]]) -> int:
+    state = get_global_state()
     # TODO: support more sampling parameters
     uid = state.new_user()
     await state.send_one(
         TokenizeMsg(
             uid=uid,
-            text=prompt,
+            text=text,
             sampling_params=SamplingParams(
                 ignore_eos=req.ignore_eos,
                 max_tokens=req.max_tokens,
@@ -276,20 +309,28 @@ async def v1_completions(req: OpenAICompletionRequest, request: Request):
             ),
         )
     )
+    return uid
 
+
+@app.post("/v1/chat/completions")
+async def v1_chat_completions(req: OpenAICompletionRequest, request: Request):
+    state = get_global_state()
+    if req.messages:
+        prompt = [msg.model_dump() for msg in req.messages]
+    else:
+        assert req.prompt is not None, "Either 'messages' or 'prompt' must be provided"
+        prompt = req.prompt
+
+    uid = await _submit(req, prompt)
     if req.stream:
         return StreamingResponse(
-            state.stream_with_cancellation(state.stream_chat_completions(uid), request, uid),
+            state.stream_with_cancellation(
+                state.stream_chat_completions(uid, req.model), request, uid
+            ),
             media_type="text/event-stream",
         )
 
-    # Non-streaming: collect all chunks and return a single JSON response
-    full_content = ""
-    async for ack in state.wait_for_ack(uid):
-        full_content += ack.incremental_output
-        if ack.finished:
-            break
-
+    content, last_ack = await state.collect(uid)
     return {
         "id": f"chatcmpl-{uid}",
         "object": "chat.completion",
@@ -298,15 +339,42 @@ async def v1_completions(req: OpenAICompletionRequest, request: Request):
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": full_content},
-                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": last_ack.finish_reason or "stop",
             }
         ],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        },
+        "usage": _usage(last_ack),
+    }
+
+
+@app.post("/v1/completions")
+async def v1_completions(req: OpenAICompletionRequest, request: Request):
+    state = get_global_state()
+    if req.prompt is None:
+        raise HTTPException(status_code=400, detail="'prompt' must be provided")
+
+    uid = await _submit(req, req.prompt)
+    if req.stream:
+        return StreamingResponse(
+            state.stream_with_cancellation(state.stream_completions(uid, req.model), request, uid),
+            media_type="text/event-stream",
+        )
+
+    text, last_ack = await state.collect(uid)
+    return {
+        "id": f"cmpl-{uid}",
+        "object": "text_completion",
+        "created": int(time.time()),
+        "model": req.model,
+        "choices": [
+            {
+                "index": 0,
+                "text": text,
+                "logprobs": None,
+                "finish_reason": last_ack.finish_reason or "stop",
+            }
+        ],
+        "usage": _usage(last_ack),
     }
 
 
@@ -321,21 +389,7 @@ async def shell_completion(req: OpenAICompletionRequest):
     assert req.messages is not None, "Shell completion only supports chat-completions"
     prompt = [msg.model_dump() for msg in req.messages]
 
-    # TODO: support more sampling parameters
-    uid = state.new_user()
-    await state.send_one(
-        TokenizeMsg(
-            uid=uid,
-            text=prompt,
-            sampling_params=SamplingParams(
-                ignore_eos=req.ignore_eos,
-                max_tokens=req.max_tokens,
-                temperature=req.temperature,
-                top_k=req.top_k,
-                top_p=req.top_p,
-            ),
-        )
-    )
+    uid = await _submit(req, prompt)
 
     async def _abort():
         await state.abort_user(uid)
@@ -345,7 +399,6 @@ async def shell_completion(req: OpenAICompletionRequest):
         media_type="text/event-stream",
         background=BackgroundTask(lambda: _abort),
     )
-
 
 
 async def shell():
