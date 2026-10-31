@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 from .utils import deserialize_type, serialize_type
 
@@ -27,3 +27,6 @@ class UserReply(BaseFrontendMsg):
     uid: int
     incremental_output: str
     finished: bool
+    finish_reason: Literal["stop", "length"] | None = None  # set only when finished
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
