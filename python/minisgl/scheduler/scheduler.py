@@ -65,6 +65,7 @@ class Scheduler(SchedulerIOMixin):
         )
 
         # some alias for easy access
+        # Finished requests still referenced by the next, in-flight batch.
         self.finished_reqs: Set[Req] = set()
         self.tokenizer = load_tokenizer(config.model_path)
         self.eos_token_id = self.tokenizer.eos_token_id
@@ -102,7 +103,7 @@ class Scheduler(SchedulerIOMixin):
                 self.engine.stream.wait_stream(self.stream)
                 ongoing_data = (forward_input, self._forward(forward_input))
 
-        self._process_last_data(last_data)
+        self._process_last_data(last_data, ongoing_data)
         return ongoing_data
 
     def normal_loop(self) -> None:
@@ -135,7 +136,9 @@ class Scheduler(SchedulerIOMixin):
         self.sync_all_ranks()
         self.engine.shutdown()
 
-    def _process_last_data(self, last_data: ForwardData | None) -> None:
+    def _process_last_data(
+        self, last_data: ForwardData | None, ongoing_data: ForwardData | None = None
+    ) -> None:
         if last_data is None:
             return
 
@@ -143,23 +146,31 @@ class Scheduler(SchedulerIOMixin):
         copy_done.synchronize()
         reply: List[DetokenizeMsg] = []
         new_finished_reqs: Set[Req] = set()
+        inflight_reqs = set(ongoing_data[0].batch.reqs) if ongoing_data is not None else set()
         with self.cache_manager.lazy_free_region():
             for i, req in enumerate(batch.reqs):
+                if req in self.finished_reqs:
+                    # The speculative step and its token_pool write have completed.
+                    # Retire in batch order to keep allocation order consistent across TP ranks.
+                    self._free_req_resources(req)
+                    continue
                 if isinstance(req, ChunkedReq):
                     continue
                 next_token = next_tokens_cpu[i]
                 req.append_host(next_token.unsqueeze(0))
                 next_token = int(next_token.item())
-                finished = not req.can_decode
+                # device_len may already include the next, in-flight step.
+                finished = req.input_ids.numel() >= req.max_device_len
                 if not req.sampling_params.ignore_eos:
                     finished |= next_token == self.eos_token_id
                 reply.append(DetokenizeMsg(uid=req.uid, next_token=next_token, finished=finished))
 
-                # NOTE: overlap scheduling may make the request freed twice, skip second free
-                if finished and req not in self.finished_reqs:
+                if finished:
                     self.decode_manager.remove_req(req)
-                    self._free_req_resources(req)
-                    new_finished_reqs.add(req)
+                    if req in inflight_reqs:
+                        new_finished_reqs.add(req)
+                    else:
+                        self._free_req_resources(req)
                 elif batch.is_prefill:  # for prefill, non-chunk req, cache the prefix
                     self.cache_manager.cache_req(req, finished=False)
 
@@ -229,6 +240,8 @@ class Scheduler(SchedulerIOMixin):
         batch.input_ids = self.token_pool[input_mapping]
         forward_output = self.engine.forward_batch(batch, sample_args)
         self.token_pool[output_mapping] = forward_output.next_tokens_gpu
+        # Include the final write before releasing rows or its cross-stream index tensors.
+        forward_output.copy_done_event.record(self.engine.stream)
         self.decode_manager.filter_reqs(forward_input.batch.reqs)
         return forward_output
 
