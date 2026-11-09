@@ -220,6 +220,7 @@ async def benchmark_one(
         if input_length is not None:
             kwargs["input_length_override"] = input_length
         kwargs.update(extra_body or {})  # can override kwargs
+        tics = [time.perf_counter()]
         response = await client.chat.completions.create(
             model=model,
             stream=True,
@@ -233,7 +234,6 @@ async def benchmark_one(
             temperature=0.0,
             extra_body=kwargs,
         )
-        tics = [time.perf_counter()]
         async for _ in response:
             tics.append(time.perf_counter())
             if len(tics) == 2:
