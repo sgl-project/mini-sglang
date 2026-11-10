@@ -7,6 +7,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 from tqdm.asyncio import tqdm
 from transformers import AutoConfig, AutoTokenizer, PretrainedConfig, PreTrainedTokenizerBase
 
+
 class DisabledTqdm(tqdm):
     def __init__(self, *args, **kwargs):
         kwargs.pop("name", None)
@@ -19,7 +20,10 @@ def load_tokenizer(model_path: str) -> PreTrainedTokenizerBase:
     # Some Mistral models store chat_template in a separate JSON file
     if not getattr(tokenizer, "chat_template", None):
         try:
-            path = hf_hub_download(repo_id=model_path, filename="chat_template.json")
+            if os.path.isdir(model_path):
+                path = os.path.join(model_path, "chat_template.json")
+            else:
+                path = hf_hub_download(repo_id=model_path, filename="chat_template.json")
             with open(path, "r", encoding="utf-8") as f:
                 tokenizer.chat_template = json.load(f)["chat_template"]
         except Exception:
