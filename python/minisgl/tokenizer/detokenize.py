@@ -93,7 +93,8 @@ class DetokenizeManager:
             s = self.decode_map[msg.uid]
             new_text = read_str[len(surr_str) :]
             # Streaming chunk: update the decode status
-            if len(new_text) > 0 and not new_text.endswith("�"):
+            # No later token can complete a partial codepoint once the request finishes.
+            if len(new_text) > 0 and (msg.finished or not new_text.endswith("�")):
                 output_str = s.decoded_str + new_text
                 s.decoded_str = output_str
                 s.surr_offset = s.read_offset
