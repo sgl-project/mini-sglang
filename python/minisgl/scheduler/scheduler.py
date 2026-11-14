@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, List, NamedTuple, NoReturn, Set, Tuple, TypeAlias
 
 import torch
@@ -182,7 +183,9 @@ class Scheduler(SchedulerIOMixin):
                     f"request {msg.uid} is dropped."
                 )
             if msg.sampling_params.max_tokens > max_output_len:
-                msg.sampling_params.max_tokens = max_output_len
+                msg = replace(
+                    msg, sampling_params=replace(msg.sampling_params, max_tokens=max_output_len)
+                )
                 logger.warning_rank0(
                     f"Adjust max_tokens to {max_output_len} for request {msg.uid}."
                 )
