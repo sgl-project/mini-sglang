@@ -5,7 +5,7 @@ import json
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Literal, Tuple
+from typing import Any, Callable, Dict, List, Literal, Tuple
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -23,7 +23,7 @@ from minisgl.message import (
 from minisgl.utils import ZmqAsyncPullQueue, ZmqAsyncPushQueue, init_logger
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.background import BackgroundTask
 
 from .args import ServerArgs
@@ -81,6 +81,17 @@ class OpenAICompletionRequest(BaseModel):
     frequency_penalty: float = 0.0
 
     ignore_eos: bool = False
+
+    chat_template_kwargs: Dict[str, Any] | None = None
+
+    @field_validator("chat_template_kwargs")
+    @classmethod
+    def _check_chat_template_kwargs(cls, value: Dict[str, Any] | None):
+        # Reject `chat_template` from clients, as it could replace the model's prompt format or
+        # render a huge prompt
+        if value is not None and "chat_template" in value:
+            raise ValueError("chat_template_kwargs must not contain 'chat_template'")
+        return value
 
 
 class ModelCard(BaseModel):
@@ -274,6 +285,7 @@ async def v1_completions(req: OpenAICompletionRequest, request: Request):
                 top_k=req.top_k,
                 top_p=req.top_p,
             ),
+            chat_template_kwargs=json.dumps(req.chat_template_kwargs or {}),
         )
     )
 
@@ -334,6 +346,7 @@ async def shell_completion(req: OpenAICompletionRequest):
                 top_k=req.top_k,
                 top_p=req.top_p,
             ),
+            chat_template_kwargs=json.dumps(req.chat_template_kwargs or {}),
         )
     )
 
@@ -345,7 +358,6 @@ async def shell_completion(req: OpenAICompletionRequest):
         media_type="text/event-stream",
         background=BackgroundTask(lambda: _abort),
     )
-
 
 
 async def shell():

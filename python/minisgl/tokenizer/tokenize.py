@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import List
 
 import torch
@@ -20,6 +21,7 @@ class TokenizeManager:
                     msg.text,
                     tokenize=False,
                     add_generation_prompt=True,
+                    **json.loads(msg.chat_template_kwargs),
                 )
                 assert isinstance(prompt, str)
             else:
