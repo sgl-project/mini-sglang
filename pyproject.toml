@@ -40,6 +40,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "httpx",
+    "httpx-sse>=0.4.3",
     "pytest>=6.0",
     "pytest-cov>=2.0",
     "black>=22.0",
