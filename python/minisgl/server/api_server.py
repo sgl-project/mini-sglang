@@ -151,10 +151,13 @@ class FrontendManager:
 
     async def stream_generate(self, uid: int):
         async for ack in self.wait_for_ack(uid):
-            yield f"data: {ack.incremental_output}\n".encode()
+            # SSE treats CRLF, CR and LF as line endings. Prefix every line so
+            # multiline output remains one event, including trailing newlines.
+            text = ack.incremental_output.replace("\r\n", "\n").replace("\r", "\n")
+            yield ("\n".join(f"data: {line}" for line in text.split("\n")) + "\n\n").encode()
             if ack.finished:
                 break
-        yield "data: [DONE]\n".encode()
+        yield b"data: [DONE]\n\n"
         logger.debug("Finished streaming response for user %s", uid)
 
     async def stream_chat_completions(self, uid: int):
@@ -347,7 +350,6 @@ async def shell_completion(req: OpenAICompletionRequest):
     )
 
 
-
 async def shell():
     commands = ["/exit", "/reset"]
     completer = WordCompleter(commands)
@@ -384,9 +386,8 @@ async def shell():
             async for chunk in (await shell_completion(req)).body_iterator:
                 msg = chunk.decode()  # type: ignore
                 assert msg.startswith("data: "), msg
-                msg = msg[6:]
-                assert msg.endswith("\n"), msg
-                msg = msg[:-1]
+                assert msg.endswith("\n\n"), msg
+                msg = "\n".join(line.removeprefix("data: ") for line in msg[:-2].split("\n"))
                 if msg == "[DONE]":
                     continue
                 cur_msg += msg
