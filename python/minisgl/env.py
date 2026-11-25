@@ -38,11 +38,9 @@ _TO_BOOL = lambda x: x.lower() in ("1", "true", "yes")
 
 
 def _PARSE_MEM_BYTES(mem: str) -> int:
-    mem = mem.strip().upper()
+    mem = mem.strip().upper().removesuffix("B")
     if not mem[-1].isalpha():
         return int(mem)
-    if mem.endswith("B"):
-        mem = mem[:-1]
     UNIT_MAP = {"K": 1024, "M": 1024**2, "G": 1024**3}
     return int(float(mem[:-1]) * UNIT_MAP[mem[-1]])
 
