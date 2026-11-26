@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, Callable, List, Tuple
 
 import torch
 from minisgl.core import Batch, get_global_ctx
-from minisgl.utils import is_sm100_supported
+from minisgl.utils import init_logger, is_sm100_supported
 
 from .base import BaseAttnBackend, BaseAttnMetadata
 from .utils import BaseCaptureData
 
 if TYPE_CHECKING:
     from minisgl.models import ModelConfig
+
+logger = init_logger(__name__)
 
 
 @dataclass
@@ -44,6 +47,8 @@ class FlashAttentionBackend(BaseAttnBackend):
         self.capture_bs: List[int] = []
         self.scale = config.head_dim**-0.5
         self.version = 4 if is_sm100_supported() else 3
+        # import at startup, so a broken install fails here instead of on the first prefill
+        self.flash_attn_with_kvcache = _load_flash_attn_with_kvcache(self.version)
 
     def forward(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, layer_id: int, batch: Batch
@@ -52,6 +57,7 @@ class FlashAttentionBackend(BaseAttnBackend):
         assert isinstance(metadata, FAMetadata)
         self.kvcache.store_kv(k, v, batch.out_loc, layer_id)
         return _fa_sgl_impl(
+            self.flash_attn_with_kvcache,
             q=q,
             k_cache=self.kvcache.k_cache(layer_id),
             v_cache=self.kvcache.v_cache(layer_id),
@@ -136,7 +142,41 @@ class FlashAttentionBackend(BaseAttnBackend):
         self.capture.page_table[:bs, :table_len].copy_(metadata.page_table)
 
 
+_INSTALL_HINT = (
+    "Please install it with `pip install sgl-kernel`.\n"
+    "If you're sure it's correctly installed, try `apt update && apt install libnuma1`."
+)
+
+
+def _load_flash_attn_with_kvcache(version: int) -> Callable[..., torch.Tensor]:
+    try:
+        from sgl_kernel.flash_attn import flash_attn_with_kvcache
+
+        return flash_attn_with_kvcache
+    except ImportError as e:
+        raise ImportError(f"sgl_kernel.flash_attn is not found. {_INSTALL_HINT}") from e
+    except Exception as e:
+        # sgl_kernel.flash_attn imports its optional FA4 (CuTe DSL) eagerly and only
+        # tolerates ImportError. With an nvidia-cutlass-dsl it was not written for, FA4 fails
+        # with another error (e.g. AttributeError: nvvm has no 'RoundingModeKind' on 4.8),
+        # which takes FA3 down with it. FA3 does not need FA4, so retry without it.
+        if version != 3:
+            raise RuntimeError(f"FlashAttention {version} is unavailable in sgl_kernel") from e
+        logger.warning_rank0(
+            f"sgl_kernel FA4 failed to import ({type(e).__name__}: {e}); "
+            "it is not used for FA3, so it is disabled."
+        )
+
+    sys.modules["sgl_kernel._fa4_interface"] = None  # type: ignore  # its import raises ImportError
+    try:
+        from sgl_kernel.flash_attn import flash_attn_with_kvcache
+    except ImportError as e:
+        raise ImportError(f"sgl_kernel.flash_attn (FA3) cannot be imported. {_INSTALL_HINT}") from e
+    return flash_attn_with_kvcache
+
+
 def _fa_sgl_impl(
+    flash_attn_with_kvcache: Callable[..., torch.Tensor],
     q: torch.Tensor,
     k_cache: torch.Tensor,
     v_cache: torch.Tensor,
@@ -154,15 +194,7 @@ def _fa_sgl_impl(
     pack_gqa: bool | None = None,  # Can be tuned for speed
     causal: bool = True,
 ) -> torch.Tensor:
-    try:
-        from sgl_kernel.flash_attn import flash_attn_with_kvcache
-    except ImportError as e:
-        raise ImportError(
-            "sgl_kernel.flash_attn is not found. Please install it with `pip install sgl-kernel`.\n"
-            "If you're sure it's correctly installed, try `apt update && apt install libnuma1`."
-        ) from e
-
-    return flash_attn_with_kvcache(  # type: ignore
+    return flash_attn_with_kvcache(
         q=q,
         k_cache=k_cache,
         v_cache=v_cache,
