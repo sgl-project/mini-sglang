@@ -15,6 +15,7 @@ class BatchSamplingArgs:
     temperatures: torch.Tensor | None
     top_k: torch.Tensor | None = None
     top_p: torch.Tensor | None = None
+    greedy_mask: torch.Tensor | None = None
 
 
 def make_device_tensor(data: List, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
@@ -52,11 +53,12 @@ class Sampler:
 
     def prepare(self, batch: Batch) -> BatchSamplingArgs:
         params = [r.sampling_params for r in batch.reqs]
-        if all(p.is_greedy for p in params):
+        greedy = [p.is_greedy for p in params]
+        if all(greedy):
             return BatchSamplingArgs(temperatures=None)
 
         MIN_P = MIN_T = 1e-6
-        ts = [max(0.0 if p.is_greedy else p.temperature, MIN_T) for p in params]
+        ts = [max(0.0 if g else p.temperature, MIN_T) for p, g in zip(params, greedy)]
         top_ks = [p.top_k if p.top_k >= 1 else self.vocab_size for p in params]
         top_ps = [min(max(p.top_p, MIN_P), 1.0) for p in params]
         temperatures = make_device_tensor(ts, torch.float32, self.device)
@@ -65,11 +67,18 @@ class Sampler:
             top_k = make_device_tensor(top_ks, torch.int32, self.device)
         if any(p < 1.0 for p in top_ps):
             top_p = make_device_tensor(top_ps, torch.float32, self.device)
-        return BatchSamplingArgs(temperatures, top_k=top_k, top_p=top_p)
+        greedy_mask = make_device_tensor(greedy, torch.bool, self.device) if any(greedy) else None
+        return BatchSamplingArgs(temperatures, top_k=top_k, top_p=top_p, greedy_mask=greedy_mask)
 
     @nvtx_annotate("Sampler")
     def sample(self, logits: torch.Tensor, args: BatchSamplingArgs) -> torch.Tensor:
         with torch.cuda.nvtx.range("Sampler"):
             if args.temperatures is None:  # greedy sampling
                 return torch.argmax(logits, dim=-1)
-            return sample_impl(logits.float(), args.temperatures, args.top_k, args.top_p)
+            # Read the original scores before sampling can reuse the logits buffer.
+            if args.greedy_mask is not None:
+                greedy_ids = torch.argmax(logits, dim=-1)
+            sampled_ids = sample_impl(logits.float(), args.temperatures, args.top_k, args.top_p)
+            if args.greedy_mask is not None:
+                return torch.where(args.greedy_mask, greedy_ids.to(sampled_ids.dtype), sampled_ids)
+            return sampled_ids
